@@ -1,0 +1,23 @@
+name: Build macOS app
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: ./scripts/build.sh
+      - name: Verify Git behavior and system sampling
+        run: .build/release/Worklight --self-test
+      - name: Package
+        run: ditto -c -k --sequesterRsrc --keepParent dist/Worklight.app dist/Worklight.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Worklight-macOS
+          path: dist/Worklight.zip
