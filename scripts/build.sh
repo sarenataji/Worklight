@@ -1,12 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-swift build -c release
+VERSION=$(cat VERSION)
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo 'VERSION must contain a three-part release number.' >&2
+  exit 1
+fi
+swift build -c release --arch arm64 --arch x86_64
+BIN_DIR=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 APP="dist/Worklight.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp .build/release/Worklight "$APP/Contents/MacOS/Worklight"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cp "$BIN_DIR/Worklight" "$APP/Contents/MacOS/Worklight"
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -16,8 +22,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Worklight</string>
 <key>CFBundleDisplayName</key><string>Worklight</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>$VERSION</string>
+<key>CFBundleVersion</key><string>$VERSION</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

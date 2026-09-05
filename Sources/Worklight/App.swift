@@ -26,6 +26,14 @@ struct WorklightApp: App {
         .commands { CommandGroup(replacing: .newItem) {} }
     }
     init() {
+        if let index = CommandLine.arguments.firstIndex(of: "--apply-update") {
+            let result = AppUpdateService.apply(arguments: Array(CommandLine.arguments.dropFirst(index + 1)))
+            let helper = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+            if helper.deletingLastPathComponent() == AppUpdateService.cache.standardizedFileURL && helper.lastPathComponent.hasPrefix("helper-") {
+                try? FileManager.default.removeItem(at: helper)
+            }
+            exit(result)
+        }
         if CommandLine.arguments.contains("--render-preview") { renderPreview(); exit(0) }
         if CommandLine.arguments.contains("--self-test") { SelfTests.run(); exit(0) }
         if CommandLine.arguments.contains("--diagnose") {

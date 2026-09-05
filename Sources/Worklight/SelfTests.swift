@@ -9,6 +9,16 @@ enum SelfTests {
             guard condition() else { fputs("FAIL: \(message)\n", stderr); exit(1) }
             count += 1
         }
+        check(AppVersion("v0.10.0")! > AppVersion("0.9.9")!, "Release versions compare numerically")
+        check(AppVersion("0.3.0") == AppVersion("v0.3.0"), "Release tags and bundle versions normalize")
+        check(AppVersion("v1.2.3-beta") == nil && AppVersion("../1.2.3") == nil && AppVersion("1.2") == nil, "Malformed and prerelease version strings are rejected")
+        let updateRelease = AppRelease(tag_name: "v0.4.0", draft: false, prerelease: false, assets: [.init(name: "Worklight-macOS-universal.zip", digest: nil)])
+        check(updateRelease.isNewer(than: "0.3.0") && !updateRelease.isNewer(than: "0.4.0") && !updateRelease.isNewer(than: "0.5.0"), "Updater never offers equal versions or downgrades")
+        check(!AppRelease(tag_name: "v0.4.0", draft: true, prerelease: false, assets: updateRelease.assets).isNewer(than: "0.3.0"), "Draft releases are ignored")
+        check(!AppRelease(tag_name: "v0.4.0", draft: false, prerelease: true, assets: updateRelease.assets).isNewer(than: "0.3.0"), "Prereleases are ignored")
+        check(!AppRelease(tag_name: "v0.4.0", draft: false, prerelease: false, assets: []).isNewer(than: "0.3.0"), "Releases without universal package are ignored")
+        check(AppUpdateService.validArchivePaths("Worklight.app/\nWorklight.app/Contents/MacOS/Worklight"), "Expected app archive paths accepted")
+        check(!AppUpdateService.validArchivePaths("Worklight.app/../../other") && !AppUpdateService.validArchivePaths("/Worklight.app/Contents") && !AppUpdateService.validArchivePaths("Other.app/file") && !AppUpdateService.validArchivePaths(""), "Archive traversal, absolute paths and unrelated bundles rejected")
         check(WorkTimeLedger.shouldCount(selected: true, focused: true, running: true, suspended: false, idle: 59), "Selected foreground app counts before idle threshold")
         check(!WorkTimeLedger.shouldCount(selected: true, focused: true, running: true, suspended: false, idle: 60), "Idle threshold pauses tracking")
         check(!WorkTimeLedger.shouldCount(selected: true, focused: false, running: true, suspended: false, idle: 0), "Background AI/app runtime is excluded")
@@ -83,6 +93,21 @@ enum SelfTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("worklight-test-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        let updateTarget = root.appendingPathComponent("Installed.app")
+        let updatePrepared = root.appendingPathComponent("Prepared.app")
+        try! "old".write(to: updateTarget, atomically: true, encoding: .utf8)
+        try! "new".write(to: updatePrepared, atomically: true, encoding: .utf8)
+        try! AppUpdateService.replace(prepared: updatePrepared, target: updateTarget) { _ in true }
+        check((try? String(contentsOf: updateTarget)) == "new", "Prepared update replaces only the requested temporary target")
+        try! "broken".write(to: updatePrepared, atomically: true, encoding: .utf8)
+        do {
+            try AppUpdateService.replace(prepared: updatePrepared, target: updateTarget) { _ in false }
+            check(false, "Failed launch must fail installation")
+        } catch { check((try? String(contentsOf: updateTarget)) == "new", "Failed update launch restores previous app") }
+        do {
+            try AppUpdateService.replace(prepared: root.appendingPathComponent("missing-update"), target: updateTarget) { _ in true }
+            check(false, "Missing prepared bundle must fail installation")
+        } catch { check((try? String(contentsOf: updateTarget)) == "new", "Replacement failure preserves existing installation") }
         let remote = root.appendingPathComponent("remote.git").path
         let local = root.appendingPathComponent("local").path
         let other = root.appendingPathComponent("other").path

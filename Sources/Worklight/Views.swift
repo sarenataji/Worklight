@@ -95,7 +95,7 @@ struct DashboardView: View {
             Spacer()
             Circle().fill(model.history.isEmpty ? palette.muted : palette.lime).frame(width: 5, height: 5)
                 .accessibilityLabel(model.history.isEmpty ? "Starting monitoring" : "Monitoring your Mac")
-            Button { model.refresh() } label: {
+            Button { model.refresh(); AppUpdater.shared.check() } label: {
                 if model.refreshing { ProgressView().controlSize(.mini).frame(width: 24, height: 24) }
                 else { Image(systemName: "arrow.clockwise").frame(width: 24, height: 24) }
             }.buttonStyle(.plain).foregroundStyle(palette.muted).disabled(model.refreshing || model.pulling != nil)
@@ -143,6 +143,7 @@ struct DashboardView: View {
     }
     private var projects: some View {
         VStack(alignment: .leading, spacing: 10) {
+            AppUpdateBanner(updater: .shared)
             projectActivity
             HStack {
                 Text("Local work")
@@ -581,5 +582,21 @@ struct Sparkline: View {
                 }
             }.stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
         }.accessibilityLabel("Recent CPU usage: \(Int(values.last ?? 0)) percent")
+    }
+}
+
+private struct AppUpdateBanner: View {
+    @ObservedObject var updater: AppUpdater
+    var body: some View {
+        if let message = updater.message {
+            HStack(spacing: 8) {
+                Text(message).font(.system(size: 9)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if updater.release != nil {
+                    Button("Install & restart") { updater.install() }
+                        .buttonStyle(NeonButtonStyle()).disabled(updater.busy)
+                }
+            }
+        }
     }
 }

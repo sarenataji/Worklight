@@ -2,6 +2,7 @@ name: Build macOS app
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -14,10 +15,32 @@ jobs:
       - name: Build
         run: ./scripts/build.sh
       - name: Verify Git behavior and system sampling
-        run: .build/release/Worklight --self-test
+        run: dist/Worklight.app/Contents/MacOS/Worklight --self-test
       - name: Package
-        run: ditto -c -k --sequesterRsrc --keepParent dist/Worklight.app dist/Worklight.zip
+        run: ditto -c -k --norsrc --keepParent dist/Worklight.app dist/Worklight-macOS-universal.zip
       - uses: actions/upload-artifact@v4
         with:
           name: Worklight-macOS
-          path: dist/Worklight.zip
+          path: dist/Worklight-macOS-universal.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches app version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: test "$RELEASE_TAG" = "v$(cat VERSION)"
+      - uses: actions/download-artifact@v4
+        with:
+          name: Worklight-macOS
+          path: dist
+      - name: Publish versioned app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/Worklight-macOS-universal.zip --verify-tag --generate-notes
