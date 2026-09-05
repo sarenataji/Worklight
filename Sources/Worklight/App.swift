@@ -4,12 +4,21 @@ import AppKit
 @main
 struct WorklightApp: App {
     @StateObject private var model = DashboardModel()
+    @StateObject private var waveAnimator = MenuBarWaveAnimator()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some Scene {
         MenuBarExtra {
             DashboardView(model: model)
         } label: {
-            Label(model.incoming > 0 ? "↓\(model.incoming) · \(Int(model.performance.cpu))%" : "\(Int(model.performance.cpu))%", systemImage: "sun.max")
+            Label {
+                Text(model.incoming > 0 ? "↓\(model.incoming) · \(Int(model.performance.cpu))%" : "\(Int(model.performance.cpu))%")
+            } icon: {
+                Image(nsImage: waveAnimator.image)
+            }
                 .task { model.start() }
+                .task(id: WaveConfiguration(cpu: model.performance.cpu, reduceMotion: reduceMotion)) {
+                    await waveAnimator.animate(WaveConfiguration(cpu: model.performance.cpu, reduceMotion: reduceMotion))
+                }
         }.menuBarExtraStyle(.window)
         Window("Worklight", id: "dashboard") {
             DashboardView(model: model)

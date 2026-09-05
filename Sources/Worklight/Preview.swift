@@ -17,8 +17,9 @@ func renderPreview() {
         (1, nil, "performance-preview.png"),
         (0, model.repositories.first(where: { !$0.files.isEmpty })?.id, "files-preview.png")
     ]
+    for appearance in ["dark", "light"] {
     for preview in views {
-        let view = NSHostingView(rootView: DashboardView(model: model, initialTab: preview.tab, expandedRepository: preview.expanded))
+        let view = NSHostingView(rootView: DashboardView(model: model, initialTab: preview.tab, expandedRepository: preview.expanded, appearanceOverride: appearance))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: DashboardView.width, height: DashboardView.height), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
         window.orderFront(nil)
@@ -26,8 +27,9 @@ func renderPreview() {
         RunLoop.main.run(until: Date().addingTimeInterval(1))
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
         view.cacheDisplay(in: view.bounds, to: bitmap)
-        if let png = bitmap.representation(using: .png, properties: [:]) { try? png.write(to: directory.appendingPathComponent(preview.filename)) }
+        if let png = bitmap.representation(using: .png, properties: [:]) { try? png.write(to: directory.appendingPathComponent(appearance + "-" + preview.filename)) }
         window.orderOut(nil)
+    }
     }
     print("Rendered dashboard previews in dist/")
 }

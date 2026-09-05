@@ -12,7 +12,7 @@ cd Worklight
 ./scripts/install.sh
 ```
 
-The installer builds a release app, signs it locally, copies it into `~/Applications/Worklight.app`, and opens it. Look for the sun icon in your menu bar. The first launch also opens a dashboard window; closing that window leaves the menu bar app running. Quit Worklight using the menu in its header.
+The installer builds a release app, signs it locally, copies it into `~/Applications/Worklight.app`, and opens it. Look for the waveform in your menu bar. Its height reflects CPU usage, and it gently moves at 20% CPU or higher. Reduce Motion keeps it static. Animation uses existing CPU samples without increasing system polling. The first launch also opens a dashboard window; closing that window leaves the menu bar app running. Quit Worklight using the menu in its header.
 
 To update: quit Worklight, pull this repository, and run the installer again. To start at login, add Worklight in System Settings → General → Login Items.
 
