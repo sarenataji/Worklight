@@ -46,9 +46,15 @@ enum SelfTests {
         check(!work.active, "Backward clock changes pause")
         work.resume(at: epoch.addingTimeInterval(600))
         work.sample(at: epoch.addingTimeInterval(605), idle: 400)
-        check(work.pending?.start == epoch.addingTimeInterval(600), "Idle review cannot predate session start")
-        work.resolveIdle(include: false, at: epoch.addingTimeInterval(605))
+        check(work.pending == nil && work.active, "Pre-existing system idle cannot trigger a short session prompt")
+        for second in stride(from: 610, through: 900, by: 5) {
+            work.sample(at: epoch.addingTimeInterval(Double(second)), idle: 1000)
+        }
+        check(work.pending?.seconds == 300, "Review requires five idle minutes inside the new session")
+        work.resolveIdle(include: false, at: epoch.addingTimeInterval(900))
         check(work.totals()["/second"] == 5 && work.active, "Excluding idle resumes without credit")
+        work.sample(at: epoch.addingTimeInterval(905), idle: 1000)
+        check(work.pending == nil && work.active, "Resume starts a fresh idle window even if system idle remains high")
         let savedTime = try! JSONEncoder().encode(work)
         let restoredTime = try! JSONDecoder().decode(WorkSessionStore.self, from: savedTime)
         check(restoredTime.totals() == work.totals(), "Sessions and legacy totals survive serialization")

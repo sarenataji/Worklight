@@ -48,8 +48,10 @@ struct WorkSessionStore: Codable {
             pause("Paused—time gap"); return
         }
         guard idle.isFinite, idle >= 0 else { pause("Paused—activity unavailable"); return }
-        if idle >= 300 {
-            let start = max(sessions[index].start, now.addingTimeInterval(-idle))
+        // Starting or resuming is explicit activity; ignore idle time before it.
+        let sessionIdle = min(idle, now.timeIntervalSince(sessions[index].start))
+        if sessionIdle >= 300 {
+            let start = now.addingTimeInterval(-sessionIdle)
             sessions[index].end = start
             pending = WorkSession(project: sessions[index].project, start: start, end: now)
             pause("Idle—awaiting review")
@@ -151,7 +153,7 @@ final class WorkTimeTracker: ObservableObject {
         guard storageError == nil, !suspended else { return }
         let wasActive = active
         let now = ProcessInfo.processInfo.systemUptime
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!)
         if now - lastSample > 15 || now < lastSample {
             if active { store.pause("Paused—time gap") }
             pendingFrozen = true
@@ -231,75 +233,88 @@ struct WorkTimeSummary: View {
             }
         }.buttonStyle(.plain).frame(width: 130)
             .help("Total active work time across projects. Click to track a project or view the breakdown.")
-            .popover(isPresented: $expanded) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Project timer").font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                        Text(tracker.status)
-                            .font(.system(size: 10)).foregroundStyle(tracker.active ? accent : .secondary)
-                    }
-                    if let error = tracker.storageError { Text(error).font(.caption) }
-                    if let project = tracker.project {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(URL(fileURLWithPath: project).lastPathComponent).font(.system(size: 15, weight: .semibold))
-                                .lineLimit(2).help(project)
-                            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                                Text(WorkTimeLedger.display(tracker.seconds(for: project)))
-                                    .font(.system(size: 22, weight: .medium).monospacedDigit())
-                            }
-                        }
-                        info("Scope", "Across all apps")
-                    }
-                    info("Tracking", "Project session")
-                    Divider()
-                    Menu {
-                        ForEach(repositories) { repo in
-                            Button(repo.name) { tracker.start(project: repo.path) }
-                        }
-                    } label: {
-                        Label(tracker.project == nil ? "Start project session…" : "Switch project…", systemImage: "folder")
-                    }.menuStyle(.borderlessButton).disabled(repositories.isEmpty || tracker.storageError != nil || tracker.store.pending != nil)
-                    if let pending = tracker.store.pending {
-                        Text("Count \(WorkTimeLedger.display(pending.seconds)) away from input?")
-                            .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
-                        Text("Timer stays paused until you choose.").font(.system(size: 10)).foregroundStyle(.secondary)
-                        HStack {
-                            Button("Count & resume") { tracker.resolveIdle(include: true) }
-                            Button("Exclude & resume") { tracker.resolveIdle(include: false) }
-                        }.font(.system(size: 10))
-                    } else if tracker.project != nil {
-                        HStack {
-                            Button(tracker.active ? "Pause" : "Resume") {
-                                if tracker.active { tracker.pause() } else { tracker.resume() }
-                            }
-                            Button("Stop") { tracker.stop() }
-                        }.font(.system(size: 11))
-                    }
-                    Text("Tracks across apps. After 5 minutes idle, review whether to count the time. Sleep and lock pause until you resume.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Text("All projects")
-                        Spacer()
-                        TimelineView(.periodic(from: .now, by: 1)) { _ in
-                            Text(WorkTimeLedger.display(tracker.seconds())).monospacedDigit()
-                        }
-                    }.font(.system(size: 10)).foregroundStyle(.secondary)
-                    if !timeShares.isEmpty {
-                        ForEach(Array(timeShares.enumerated()), id: \.offset) { index, share in
-                            HStack(spacing: 5) {
-                                Circle().fill(shareColor(index)).frame(width: 4, height: 4)
-                                Text(share.name).lineLimit(1).truncationMode(.middle)
-                                Spacer()
-                                Text(WorkTimeLedger.display(share.seconds)).monospacedDigit()
-                            }.font(.system(size: 9)).help(share.path)
-                        }
-                    }
-                    SessionHistory(tracker: tracker, repositories: repositories)
-                    Text("Saved locally · previous totals preserved")
-                        .font(.system(size: 9)).foregroundStyle(.secondary)
-                }.padding(16).frame(width: 275)
+            .popover(isPresented: $expanded) { timerPanel }
+    }
+    private var stateColor: Color { tracker.store.pending != nil ? .orange : tracker.active ? .green : .secondary }
+    var timerPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Project timer", systemImage: "timer").font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Label(tracker.store.pending != nil ? "Review idle" : tracker.active ? "Tracking" : "Paused",
+                      systemImage: tracker.active ? "play.fill" : "pause.fill")
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(stateColor)
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(stateColor.opacity(0.12), in: Capsule())
+                    .help(tracker.status)
             }
+            if let error = tracker.storageError { Text(error).font(.caption).foregroundStyle(.orange) }
+            HStack(alignment: .firstTextBaseline) {
+                Menu {
+                    ForEach(repositories) { repo in
+                        Button(repo.name) { tracker.start(project: repo.path) }
+                    }
+                } label: {
+                    Text(tracker.project.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Choose project")
+                        .font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                }.menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
+                    .disabled(repositories.isEmpty || tracker.storageError != nil || tracker.store.pending != nil)
+                    .help("Start or switch project. Sessions track across all apps.")
+                Spacer(minLength: 8)
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(WorkTimeLedger.display(tracker.seconds(for: tracker.project)))
+                        .font(.system(size: 23, weight: .semibold).monospacedDigit()).foregroundStyle(stateColor)
+                        .fixedSize()
+                }
+            }
+            if let pending = tracker.store.pending {
+                VStack(alignment: .leading, spacing: 7) {
+                    Label("Count \(WorkTimeLedger.display(pending.seconds)) idle?", systemImage: "clock.badge.questionmark")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.orange)
+                    HStack(spacing: 6) {
+                        Button { tracker.resolveIdle(include: true) } label: {
+                            Label("Count", systemImage: "checkmark").frame(maxWidth: .infinity)
+                        }.tint(.green)
+                        Button { tracker.resolveIdle(include: false) } label: {
+                            Label("Exclude", systemImage: "xmark").frame(maxWidth: .infinity)
+                        }.tint(.orange)
+                    }.buttonStyle(.borderedProminent).controlSize(.small)
+                    Text("Either choice resumes tracking.").font(.system(size: 9)).foregroundStyle(.secondary)
+                }.padding(9).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            } else if tracker.project != nil {
+                HStack(spacing: 6) {
+                    Button {
+                        if tracker.active { tracker.pause() } else { tracker.resume() }
+                    } label: {
+                        Label(tracker.active ? "Pause" : "Resume", systemImage: tracker.active ? "pause.fill" : "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }.tint(tracker.active ? .orange : .green)
+                    Button { tracker.stop() } label: {
+                        Label("Stop", systemImage: "stop.fill").frame(maxWidth: .infinity)
+                    }.tint(.pink)
+                }.buttonStyle(.borderedProminent).controlSize(.small)
+                if !tracker.active { Text(tracker.status).font(.system(size: 9)).foregroundStyle(.secondary) }
+            }
+            Divider()
+            HStack {
+                SessionHistory(tracker: tracker, repositories: repositories).buttonStyle(.plain).foregroundStyle(.cyan)
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text("Total \(WorkTimeLedger.display(tracker.seconds()))").monospacedDigit()
+                }.font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+            if timeShares.count > 1 {
+                ForEach(Array(timeShares.enumerated()), id: \.offset) { index, share in
+                    HStack(spacing: 5) {
+                        Circle().fill(shareColor(index)).frame(width: 5, height: 5)
+                        Text(share.name).lineLimit(1)
+                        Spacer()
+                        Text(WorkTimeLedger.display(share.seconds)).monospacedDigit()
+                    }.font(.system(size: 9)).help(share.path)
+                }
+            }
+        }.padding(12).frame(width: 280)
+            .help("Saved locally. Tracks across apps; reviews idle after 5 minutes. Sleep and lock pause tracking.")
     }
     private var timeShares: [(name: String, path: String, seconds: Double)] {
         var paths = Set(tracker.ledger.seconds.keys)
@@ -350,7 +365,7 @@ struct SessionHistory: View {
     let repositories: [Repository]
     @State private var showing = false
     var body: some View {
-        Button("Session history…") { showing = true }
+        Button("History…") { showing = true }
             .font(.system(size: 11))
             .sheet(isPresented: $showing) {
                 VStack(alignment: .leading, spacing: 12) {
