@@ -91,7 +91,6 @@ struct DashboardView: View {
             if tab == 1 { Image(systemName: "sun.max").font(.system(size: 19, weight: .medium)).foregroundStyle(palette.lime)
                 .frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line)) }
             Text("Worklight").font(.system(size: 14, weight: .semibold))
-            if tab == 0 { WorkTimeSummary(tracker: .shared, repositories: model.repositories) }
             Spacer()
             Circle().fill(model.history.isEmpty ? palette.muted : palette.lime).frame(width: 5, height: 5)
                 .accessibilityLabel(model.history.isEmpty ? "Starting monitoring" : "Monitoring your Mac")
@@ -124,6 +123,7 @@ struct DashboardView: View {
             tabButton("Projects", index: 0)
             tabButton("Your Mac", index: 1)
             Spacer()
+            if tab == 0 { WorkTimeSummary(tracker: .shared, repositories: model.repositories) }
         }.padding(.horizontal, 16).frame(height: 38)
             .overlay(alignment: .bottom) { rule }
     }

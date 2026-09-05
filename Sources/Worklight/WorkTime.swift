@@ -138,19 +138,28 @@ struct WorkTimeSummary: View {
     var body: some View {
         Button { expanded.toggle() } label: {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                HStack(spacing: 4) {
-                    Image(systemName: tracker.project != nil && !tracker.active ? "pause.circle" : "clock")
-                        .foregroundStyle(tracker.active ? accent : .secondary)
-                    if let project = tracker.project {
-                        Text(URL(fileURLWithPath: project).lastPathComponent)
-                            .lineLimit(1).truncationMode(.middle)
-                        Text("· " + WorkTimeLedger.display(tracker.seconds(for: project)))
-                            .monospacedDigit().fixedSize()
-                    } else { Text("Choose project").lineLimit(1) }
-                }.font(.system(size: 9)).foregroundStyle(.secondary)
+                let entries = timeShares
+                let total = tracker.seconds()
+                VStack(spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("Work time").font(.system(size: 8)).foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Text(WorkTimeLedger.display(total))
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                    }
+                    GeometryReader { geometry in
+                        HStack(spacing: 2) {
+                            ForEach(entries.indices, id: \.self) { index in
+                                Capsule().fill(shareColor(index))
+                                    .frame(width: max(0, geometry.size.width - CGFloat(max(0, entries.count - 1)) * 2) * entries[index].seconds / max(1, total))
+                            }
+                        }
+                    }.frame(height: 3).accessibilityHidden(true)
+                }
             }
-        }.buttonStyle(.plain).frame(maxWidth: 165, alignment: .leading)
-            .help("Project timer · manual selection")
+        }.buttonStyle(.plain).frame(width: 130)
+            .help("Total active work time across projects. Click to track a project or view the breakdown.")
             .popover(isPresented: $expanded) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -196,10 +205,34 @@ struct WorkTimeSummary: View {
                             Text(WorkTimeLedger.display(tracker.seconds())).monospacedDigit()
                         }
                     }.font(.system(size: 10)).foregroundStyle(.secondary)
+                    if !timeShares.isEmpty {
+                        ForEach(Array(timeShares.enumerated()), id: \.offset) { index, share in
+                            HStack(spacing: 5) {
+                                Circle().fill(shareColor(index)).frame(width: 4, height: 4)
+                                Text(share.name).lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Text(WorkTimeLedger.display(share.seconds)).monospacedDigit()
+                            }.font(.system(size: 9)).help(share.path)
+                        }
+                    }
                     Text("Saved locally · background AI time excluded")
                         .font(.system(size: 9)).foregroundStyle(.secondary)
                 }.padding(16).frame(width: 275)
             }
+    }
+    private var timeShares: [(name: String, path: String, seconds: Double)] {
+        var paths = Set(tracker.ledger.seconds.keys)
+        if let project = tracker.project { paths.insert(project) }
+        let entries = paths.sorted().map { path in
+            (name: URL(fileURLWithPath: path).lastPathComponent, path: path, seconds: tracker.seconds(for: path))
+        }.filter { $0.seconds > 0 }
+        if entries.count <= 5 { return entries }
+        return Array(entries.prefix(4)) + [(name: "Other projects", path: "Remaining tracked projects", seconds: entries.dropFirst(4).reduce(0) { $0 + $1.seconds })]
+    }
+    private func shareColor(_ index: Int) -> Color {
+        let dark: [Color] = [Color(red: 0, green: 0.94, blue: 0.67), Color(red: 0.68, green: 0.36, blue: 1), Color(red: 1, green: 0.16, blue: 0.66), Color(red: 0.29, green: 0.81, blue: 1), accent]
+        let light: [Color] = [.green, .purple, .pink, .blue, accent]
+        return (scheme == .dark ? dark : light)[index % 5]
     }
     private func info(_ label: String, _ value: String) -> some View {
         HStack { Text(label).foregroundStyle(.secondary); Spacer(); Text(value).lineLimit(1) }
