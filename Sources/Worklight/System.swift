@@ -97,11 +97,11 @@ struct Repository: Identifiable {
         if conflicts > 0 { return "Resolve conflicts" }
         if branch == "(detached)" { return "Detached HEAD" }
         if upstream.isEmpty { return "No tracking branch" }
-        if ahead > 0 && behind > 0 { return "Branches have diverged" }
+        if ahead > 0 && behind > 0 { return "Diverged" }
         if behind > 0 { return "Updates available" }
         if ahead > 0 { return "Ready to push" }
         if changed > 0 { return "Local edits" }
-        return "Up to date"
+        return checked == nil ? "Remote not verified" : "Up to date"
     }
     static func parse(path: String, output: String) -> Repository {
         var repo = Repository(path: path)

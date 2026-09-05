@@ -26,7 +26,7 @@ Starts with `~/Desktop/apps`; change it using the header’s menu. Discovery sea
 - **Outgoing:** local commits not on the tracked branch.
 - **Edited files:** tracked changes plus individual untracked files. Expand the file list to see paths, modification types, and staging state.
 - **Updates available:** incoming work exists. Pull is enabled only when the branch is clean and has no outgoing commits.
-- **Branches have diverged:** both sides have new commits; review in your editor.
+- **Diverged:** both sides have new commits; review in your editor.
 - **Check needed:** remote check failed, or Git could not read the repository. Cached counts are not verified live state.
 - **No tracking branch:** remote comparisons are unavailable until an upstream is configured.
 

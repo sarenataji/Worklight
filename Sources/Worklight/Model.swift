@@ -155,6 +155,14 @@ final class DashboardModel: ObservableObject {
                     return row.command.hasPrefix(path + "/")
                 }.max { ($0.bundleURL?.path.count ?? 0) < ($1.bundleURL?.path.count ?? 0) }
             }
+            // macOS may register Chromium/Electron helpers as applications themselves.
+            // Attribute those entries to the outer desktop app when it is running.
+            if let bundlePath = app?.bundleURL?.path {
+                let outerPath: String
+                if let range = bundlePath.range(of: ".app/") { outerPath = String(bundlePath[..<range.lowerBound]) + ".app" }
+                else { outerPath = bundlePath }
+                if let desktop = running.first(where: { $0.bundleURL?.path == outerPath && $0.activationPolicy == .regular }) { app = desktop }
+            }
             let key = app.map { "app-\($0.processIdentifier)" } ?? "pid-\(row.pid)"
             if grouped[key] == nil {
                 grouped[key] = AppUsage(id: key, name: app?.localizedName ?? row.name, icon: app?.icon, application: app, processes: [])
