@@ -19,6 +19,8 @@ struct AppUsage: Identifiable {
 
 @MainActor
 final class DashboardModel: ObservableObject {
+    @Published var fileActivity: [ProjectFileActivity] = []
+    @Published var activityFailures = 0
     @Published var repositories: [Repository] = []
     @Published var performance = PerformanceSnapshot()
     @Published var history: [Double] = []
@@ -78,6 +80,11 @@ final class DashboardModel: ObservableObject {
                 }
             }.value
             repositories = repos
+            let activity = await Task.detached(priority: .utility) {
+                collectProjectActivity(repos.map(\.path))
+            }.value
+            fileActivity = activity.files
+            activityFailures = activity.failed
             lastScan = Date()
             if fetch { lastFetch = Date() }
             refreshing = false

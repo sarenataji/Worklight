@@ -87,8 +87,8 @@ struct DashboardView: View {
     }
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "sun.max").font(.system(size: 19, weight: .medium)).foregroundStyle(palette.lime)
-                .frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line))
+            if tab == 1 { Image(systemName: "sun.max").font(.system(size: 19, weight: .medium)).foregroundStyle(palette.lime)
+                .frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line)) }
             Text("Worklight").font(.system(size: 14, weight: .semibold))
             Spacer()
             Circle().fill(model.history.isEmpty ? palette.muted : palette.lime).frame(width: 5, height: 5)
@@ -122,6 +122,14 @@ struct DashboardView: View {
             tabButton("Projects", index: 0)
             tabButton("Your Mac", index: 1)
             Spacer()
+            if tab == 0 {
+                Button { model.notice = "Active work-time tracking is not connected yet. Time will exclude idle time and keep AI runtime separate. Git history cannot reconstruct time worked." } label: {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("Time · Not tracked").font(.system(size: 9)).foregroundStyle(palette.muted)
+                        Capsule().fill(palette.line).frame(width: 82, height: 3)
+                    }
+                }.buttonStyle(.plain).help("Work-time tracking is not connected")
+            }
         }.padding(.horizontal, 16).frame(height: 38)
             .overlay(alignment: .bottom) { rule }
     }
@@ -141,6 +149,12 @@ struct DashboardView: View {
     }
     private var projects: some View {
         VStack(alignment: .leading, spacing: 10) {
+            projectActivity
+            HStack {
+                Text("Local work")
+                Spacer()
+                Text("Outgoing commits · not pushed")
+            }.font(.system(size: 9)).foregroundStyle(palette.muted)
             HStack {
                 Text(model.root.replacingOccurrences(of: NSHomeDirectory() + "/", with: "")).fontWeight(.medium).lineLimit(1).truncationMode(.middle).help(model.root)
                 Spacer(minLength: 8)
@@ -159,9 +173,7 @@ struct DashboardView: View {
                         repoRow(repo)
                         if repo.id != model.repositories.last?.id { rule }
                     }
-                }.background(palette.surface, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.line))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
             }
             if model.performance.memoryLevel >= 2 { memoryNudge }
             HStack {
@@ -185,6 +197,61 @@ struct DashboardView: View {
             }
         }
     }
+    private var activityColors: [Color] { [palette.pink, palette.violet, palette.mint, palette.muted] }
+    private var projectActivity: some View {
+        let files = Array(model.fileActivity.prefix(3))
+        let total = model.fileActivity.reduce(0) { $0 + $1.lines }
+        let values = files.map(\.lines) + [max(0, total - files.reduce(0) { $0 + $1.lines })]
+        return HStack(spacing: 14) {
+            ZStack {
+                Circle().stroke(palette.line, lineWidth: 5)
+                ForEach(values.indices, id: \.self) { index in
+                    let start = Double(values.prefix(index).reduce(0, +)) / Double(max(1, total))
+                    let end = start + Double(values[index]) / Double(max(1, total))
+                    Circle().trim(from: start, to: max(start, end - min(0.012, (end - start) / 4)))
+                        .stroke(activityColors[index], style: StrokeStyle(lineWidth: 5, lineCap: .butt))
+                        .rotationEffect(.degrees(-90))
+                }
+                VStack(spacing: 1) {
+                    Text("\(total)").font(.system(size: 16, weight: .semibold)).monospacedDigit()
+                    Text("lines").font(.system(size: 8)).foregroundStyle(palette.muted)
+                }
+            }.frame(width: 66, height: 66).accessibilityLabel("\(total) committed lines added and deleted in the past seven days")
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("Most changed files").font(.system(size: 10, weight: .semibold))
+                    Spacer()
+                    Text("Past 7 days").font(.system(size: 8)).foregroundStyle(palette.muted)
+                }
+                ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
+                    HStack(spacing: 5) {
+                        Circle().fill(activityColors[index]).frame(width: 4, height: 4)
+                        Text(URL(fileURLWithPath: file.path).lastPathComponent).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text("\(file.lines)").monospacedDigit()
+                    }.font(.system(size: 9)).help("\(file.repository)/\(file.path): \(file.lines) lines added + deleted")
+                }
+                if values.last! > 0 { Text("Other files · \(values.last!) lines").font(.system(size: 8)).foregroundStyle(palette.muted) }
+                if files.isEmpty { Text(model.refreshing ? "Reading activity…" : "No committed text changes").font(.system(size: 9)).foregroundStyle(palette.muted) }
+                Text(model.activityFailures > 0 ? "Partial data · \(model.activityFailures) histories unavailable" : "Committed lines added + deleted · across projects")
+                    .font(.system(size: 8)).foregroundStyle(palette.muted)
+            }
+        }.padding(.vertical, 7).padding(.horizontal, 3)
+    }
+    private func outgoingMeter(_ repo: Repository) -> some View {
+        let verified = repo.error == nil && !repo.upstream.isEmpty && repo.checked != nil
+        let maximum = max(1, model.repositories.filter { $0.error == nil && !$0.upstream.isEmpty && $0.checked != nil }.map(\.ahead).max() ?? 1)
+        return VStack(alignment: .trailing, spacing: 6) {
+            Text(verified ? "\(repo.ahead) to push" : "Unverified")
+                .font(.system(size: 9)).foregroundStyle(verified ? palette.lime : palette.muted)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(palette.line)
+                    Capsule().fill(palette.lime).frame(width: verified ? geometry.size.width * Double(repo.ahead) / Double(maximum) : 0)
+                }
+            }.frame(width: 76, height: 5).accessibilityHidden(true)
+        }.frame(width: 76).help("Outgoing commits compared with other projects, not a completion percentage")
+    }
     private func status(_ repo: Repository) -> (String, Color) {
         if repo.error != nil || repo.conflicts > 0 || repo.branch == "(detached)" { return (repo.headline, palette.amber) }
         if repo.upstream.isEmpty { return ("No tracking branch", palette.muted) }
@@ -205,11 +272,15 @@ struct DashboardView: View {
                         Text(repo.name).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                         Label(repo.branch.isEmpty ? "No branch" : repo.branch, systemImage: "arrow.triangle.branch")
                             .font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                        Text(label).font(.system(size: 9)).foregroundStyle(color).lineLimit(1)
+                        if repo.changed > 0 && label != "\(repo.changed) changed files" {
+                            Text("\(repo.changed) changed files").font(.system(size: 9)).foregroundStyle(palette.pink)
+                        }
                     }
                     Spacer(minLength: 4)
-                    Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(color).lineLimit(1).fixedSize()
+                    outgoingMeter(repo)
                     Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(palette.muted).frame(width: 10)
-                }.padding(.horizontal, 10).frame(height: 56).contentShape(Rectangle())
+                }.padding(.horizontal, 3).frame(minHeight: 66).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityLabel("\(repo.name), \(label), branch \(repo.branch)")
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             if expanded { repositoryDetails(repo).padding(.leading, 48).padding(.trailing, 12).padding(.bottom, 12) }
