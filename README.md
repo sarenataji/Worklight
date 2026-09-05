@@ -77,13 +77,17 @@ Self-tests create disposable local repositories and verify remote discovery, fet
 
 Source layout: `System.swift` handles Git and system sampling; `Model.swift` handles updates and app grouping; `Views.swift` contains the dashboard; `App.swift` defines the menu bar and window scenes.
 
-## Active work time
+## Project work sessions
 
-Expand a project and choose **Track time with…**, then select a running app such as T3 Code, Paseo, or your editor. Worklight counts estimated active time for that project while the selected app is in front. Choose the timer again when switching projects inside the same app; automatic detection of T3 Code/Paseo's selected project is not available. Only one project/app session is timed at once. Checking Worklight's own popup keeps the last external app association.
+Expand a project and choose **Start project session**, or choose a project from the header's **Work time** popup. The session follows you across editors, terminals, browsers, and AI apps. Use **Pause**, **Resume**, **Switch project…**, or **Stop** explicitly; only one project is timed at once. Automatic project suggestions are not implemented.
 
-The display advances in seconds, with accounting sampled every five seconds. Time pauses after 60 seconds without input, when another app is focused, or during sleep/inactive sessions. Uncertain transition intervals are excluded. This estimates attention; it does not measure effort or prove that a particular file is being edited. Unattended AI runtime is not included as a separate metric. No window contents, messages, or keystrokes are recorded, and no Accessibility permission is needed for this explicit association.
+After five minutes without mouse or keyboard input, the entire idle interval is removed from the running total and held for review. On return, choose **Count & resume** to include thinking, reading, or waiting, or **Exclude & resume** to discard it. Tracking stays paused until that choice. Resolve idle time before switching or stopping. Sleep, screen lock/inactive sessions, and unexpected sampling gaps pause tracking; resuming after wake is explicit. No window contents, messages, or keystrokes are recorded, and no Accessibility permission is needed.
 
-Per-project totals are stored locally in Worklight preferences every 30 seconds and when stopping, switching, sleeping, or quitting normally. An abrupt crash can lose the last unsaved interval. Select a project/app again after restarting; tracking never silently resumes against an unknown project. Use the header time readout to see tracking status or stop a session.
+**Session history…** lists uninterrupted work intervals. Pause the current interval before editing its project, start, or end. Edits cannot overlap another interval or extend into the future. Earlier totals are preserved separately because they have no detailed session history.
+
+Sessions are sampled every five seconds and saved locally every 30 seconds and on control changes, sleep, and normal quit. Abrupt termination can lose the most recent unsaved time. Restart restores the selected project paused, without counting time while Worklight was closed. Unattended AI runtime is not measured separately.
+
+The new session store uses a separate preferences key and leaves the original totals untouched. Reverting the code restores the original timer and its pre-update totals; new session data remains stored for a later upgrade but is not visible in the old timer.
 
 ## App updates
 

@@ -4,14 +4,6 @@ import CoreGraphics
 
 struct WorkTimeLedger: Codable {
     var seconds: [String: Double] = [:]
-    mutating func credit(project: String?, elapsed: Double, wasActive: Bool, isActive: Bool) {
-        // Reject sleep, clock changes, delayed samples and uncertain transitions.
-        guard let project, wasActive, isActive, elapsed > 0, elapsed <= 10 else { return }
-        seconds[project, default: 0] += elapsed
-    }
-    static func shouldCount(selected: Bool, focused: Bool, running: Bool, suspended: Bool, idle: Double) -> Bool {
-        selected && focused && running && !suspended && idle.isFinite && idle >= 0 && idle < 60
-    }
     static func display(_ seconds: Double) -> String {
         let value = Int(max(0, seconds))
         if value >= 3600 { return "\(value / 3600)h \((value % 3600) / 60)m \(value % 60)s" }
@@ -19,43 +11,107 @@ struct WorkTimeLedger: Codable {
     }
 }
 
-/// Explicit project/app sessions: no guessing from background agent activity.
+struct WorkSession: Codable, Identifiable {
+    var id = UUID()
+    var project: String
+    var start: Date
+    var end: Date
+    var seconds: Double { max(0, end.timeIntervalSince(start)) }
+}
+
+/// Each uninterrupted work interval is editable; legacy totals remain untouched.
+struct WorkSessionStore: Codable {
+    var legacy: [String: Double] = [:]
+    var sessions: [WorkSession] = []
+    var project: String?
+    var currentID: UUID?
+    var pending: WorkSession?
+    var reason = "Not started"
+
+    var active: Bool { currentID != nil }
+    mutating func resume(at now: Date) {
+        guard let project, pending == nil, !active else { return }
+        let session = WorkSession(project: project, start: now, end: now)
+        sessions.append(session); currentID = session.id; reason = "Tracking"
+    }
+    mutating func pause(_ reason: String) {
+        currentID = nil
+        self.reason = reason
+    }
+    mutating func sample(at now: Date, idle: Double) {
+        if let interval = pending {
+            if now >= interval.end && now.timeIntervalSince(interval.end) <= 15 { pending?.end = now }
+            return
+        }
+        guard let index = sessions.firstIndex(where: { $0.id == currentID }) else { return }
+        guard now >= sessions[index].end, now.timeIntervalSince(sessions[index].end) <= 15 else {
+            pause("Paused—time gap"); return
+        }
+        guard idle.isFinite, idle >= 0 else { pause("Paused—activity unavailable"); return }
+        if idle >= 300 {
+            let start = max(sessions[index].start, now.addingTimeInterval(-idle))
+            sessions[index].end = start
+            pending = WorkSession(project: sessions[index].project, start: start, end: now)
+            pause("Idle—awaiting review")
+        } else {
+            sessions[index].end = now
+        }
+    }
+    mutating func resolveIdle(include: Bool, at now: Date) {
+        guard let pending else { return }
+        if include { sessions.append(pending) }
+        self.pending = nil
+        resume(at: now)
+    }
+    func totals() -> [String: Double] {
+        var result = legacy
+        for session in sessions { result[session.project, default: 0] += session.seconds }
+        return result
+    }
+}
+
 @MainActor
 final class WorkTimeTracker: ObservableObject {
     static let shared = WorkTimeTracker()
-    @Published private(set) var ledger: WorkTimeLedger
-    @Published private(set) var project: String?
-    @Published private(set) var appName = ""
-    @Published private(set) var active = false
+    @Published private(set) var store = WorkSessionStore()
     @Published private(set) var storageError: String?
-    private var appPID: pid_t?
-    private var lastExternalPID: pid_t?
+    private let defaults: UserDefaults
+    private let key = "workSessions.v2"
+    private var observers: [NSObjectProtocol] = []
+    private var suspended = false
+    private var pendingFrozen = false
     private var lastSample = ProcessInfo.processInfo.systemUptime
     private var lastSave = ProcessInfo.processInfo.systemUptime
-    private var suspended = false
-    private var observers: [NSObjectProtocol] = []
-    private let defaults: UserDefaults
-    private let key = "workTimeLedger.v1"
+    var project: String? { store.project }
+    var active: Bool { store.active }
+    var status: String { store.reason }
+    var ledger: WorkTimeLedger { WorkTimeLedger(seconds: store.totals()) }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: key) {
-            do { ledger = try JSONDecoder().decode(WorkTimeLedger.self, from: data) }
-            catch { ledger = WorkTimeLedger(); storageError = "Saved work time could not be read. Tracking is disabled to preserve it." }
-        } else { ledger = WorkTimeLedger() }
-        lastExternalPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        do {
+            if let data = defaults.data(forKey: key) {
+                store = try JSONDecoder().decode(WorkSessionStore.self, from: data)
+                store.pause(store.pending != nil ? "Idle—awaiting review" : store.project == nil ? "Not started" : "Paused—app restarted")
+                pendingFrozen = store.pending != nil
+            } else if let data = defaults.data(forKey: "workTimeLedger.v1") {
+                store.legacy = try JSONDecoder().decode(WorkTimeLedger.self, from: data).seconds
+            }
+        } catch { storageError = "Saved work time could not be read. Tracking is disabled to preserve it." }
         let center = NSWorkspace.shared.notificationCenter
-        observers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.sample() }
-        })
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.suspended = true; self?.sample(); self?.save() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.sample(); self.suspended = true; self.pendingFrozen = true
+                    if self.project != nil { self.store.pause(self.store.pending == nil ? "Paused—sleep or lock" : "Idle—awaiting review") }
+                    self.save()
+                }
             })
         }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.suspended = false; self?.active = false; self?.lastSample = ProcessInfo.processInfo.systemUptime }
+                Task { @MainActor in self?.suspended = false; self?.lastSample = ProcessInfo.processInfo.systemUptime }
             })
         }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -69,47 +125,62 @@ final class WorkTimeTracker: ObservableObject {
             }
         }
     }
-    var availableApps: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications.filter {
-            $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
-        }.sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
-    }
-    func start(project: String, app: NSRunningApplication) {
-        guard storageError == nil, !app.isTerminated else { return }
-        sample(); save()
-        self.project = project
-        appPID = app.processIdentifier
-        appName = app.localizedName ?? "Selected app"
-        active = false
-        lastSample = ProcessInfo.processInfo.systemUptime
+    func start(project: String) {
+        guard storageError == nil, store.pending == nil, !suspended else { return }
         sample()
+        guard store.pending == nil else { return }
+        store.pause("Paused manually"); store.project = project
+        pendingFrozen = false; store.resume(at: Date()); lastSample = ProcessInfo.processInfo.systemUptime; save()
+    }
+    func pause() { sample(); if store.pending == nil { store.pause("Paused manually") }; save() }
+    func resume() {
+        guard storageError == nil, !suspended else { return }
+        pendingFrozen = false; store.resume(at: Date()); lastSample = ProcessInfo.processInfo.systemUptime; save()
     }
     func stop() {
-        sample(); save()
-        project = nil; appPID = nil; active = false
+        sample()
+        guard store.pending == nil else { return }
+        store.pause("Not started"); store.project = nil; save()
+    }
+    func resolveIdle(include: Bool) {
+        guard !suspended else { return }
+        sample(); store.resolveIdle(include: include, at: Date()); pendingFrozen = false
+        lastSample = ProcessInfo.processInfo.systemUptime; save()
     }
     func sample() {
+        guard storageError == nil, !suspended else { return }
+        let wasActive = active
         let now = ProcessInfo.processInfo.systemUptime
-        let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        // Checking Worklight's own popup keeps the last external app association.
-        if foreground != ProcessInfo.processInfo.processIdentifier { lastExternalPID = foreground }
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
-        let alive = appPID.flatMap { NSRunningApplication(processIdentifier: $0) }?.isTerminated == false
-        let eligible = WorkTimeLedger.shouldCount(selected: project != nil, focused: appPID == lastExternalPID, running: alive, suspended: suspended, idle: idle)
-        ledger.credit(project: project, elapsed: now - lastSample, wasActive: active, isActive: eligible)
-        active = eligible
+        if now - lastSample > 15 || now < lastSample {
+            if active { store.pause("Paused—time gap") }
+            pendingFrozen = true
+        } else if !(store.pending != nil && pendingFrozen) {
+            store.sample(at: Date(), idle: idle)
+            if store.pending != nil && idle < 300 { pendingFrozen = true }
+        }
         lastSample = now
-        if now - lastSave >= 30 { save() }
-        if project != nil && !alive { save(); project = nil; appPID = nil; active = false }
+        if now - lastSave >= 30 || wasActive != active { save() }
+    }
+    func canEdit(_ session: WorkSession) -> Bool {
+        session.start.timeIntervalSince1970.isFinite && session.end.timeIntervalSince1970.isFinite &&
+        session.end > session.start && session.end <= Date() &&
+        !store.sessions.contains { $0.id != session.id && $0.start < session.end && $0.end > session.start } &&
+        !(store.pending.map { $0.start < session.end && $0.end > session.start } ?? false)
+    }
+    func edit(_ session: WorkSession) {
+        guard storageError == nil, canEdit(session), session.id != store.currentID,
+              let index = store.sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        store.sessions[index] = session; save()
     }
     func save() {
         guard storageError == nil else { return }
-        if let data = try? JSONEncoder().encode(ledger) { defaults.set(data, forKey: key) }
+        if let data = try? JSONEncoder().encode(store) { defaults.set(data, forKey: key) }
         lastSave = ProcessInfo.processInfo.systemUptime
     }
     func seconds(for path: String? = nil, live: Bool = true) -> Double {
-        let stored = path.map { ledger.seconds[$0, default: 0] } ?? ledger.seconds.values.reduce(0, +)
-        // UI-only interpolation; persistent accounting remains in five-second samples.
+        let totals = store.totals()
+        let stored = path.map { totals[$0, default: 0] } ?? totals.values.reduce(0, +)
         let extra = live && active && (path == nil || path == project) ? min(5, max(0, ProcessInfo.processInfo.systemUptime - lastSample)) : 0
         return stored + extra
     }
@@ -123,7 +194,7 @@ struct ProjectWorkTime: View {
             if tracker.ledger.seconds[path] != nil || tracker.project == path {
                 Text("◷ " + WorkTimeLedger.display(tracker.seconds(for: path)))
                     .font(.system(size: 8).monospacedDigit()).foregroundStyle(.secondary)
-                    .help("Estimated active work time since tracking began; idle and background AI time excluded")
+                    .help("Project session time, including work across apps")
             }
         }
     }
@@ -165,7 +236,7 @@ struct WorkTimeSummary: View {
                     HStack {
                         Text("Project timer").font(.system(size: 13, weight: .semibold))
                         Spacer()
-                        Text(tracker.project == nil ? "Not started" : tracker.active ? "Tracking" : "Paused")
+                        Text(tracker.status)
                             .font(.system(size: 10)).foregroundStyle(tracker.active ? accent : .secondary)
                     }
                     if let error = tracker.storageError { Text(error).font(.caption) }
@@ -178,25 +249,34 @@ struct WorkTimeSummary: View {
                                     .font(.system(size: 22, weight: .medium).monospacedDigit())
                             }
                         }
-                        info("Using", tracker.appName)
+                        info("Scope", "Across all apps")
                     }
-                    info("Detection", "Manual selection")
+                    info("Tracking", "Project session")
                     Divider()
                     Menu {
                         ForEach(repositories) { repo in
-                            Menu(repo.name) {
-                                ForEach(tracker.availableApps, id: \.processIdentifier) { app in
-                                    Button(app.localizedName ?? "App") { tracker.start(project: repo.path, app: app) }
-                                }
-                            }
+                            Button(repo.name) { tracker.start(project: repo.path) }
                         }
                     } label: {
-                        Label(tracker.project == nil ? "Choose project and app…" : "Switch project or app…", systemImage: "folder")
-                    }.menuStyle(.borderlessButton).disabled(repositories.isEmpty || tracker.storageError != nil)
-                    if tracker.project != nil {
-                        Button("Stop tracking") { tracker.stop() }.buttonStyle(.plain).font(.system(size: 11))
+                        Label(tracker.project == nil ? "Start project session…" : "Switch project…", systemImage: "folder")
+                    }.menuStyle(.borderlessButton).disabled(repositories.isEmpty || tracker.storageError != nil || tracker.store.pending != nil)
+                    if let pending = tracker.store.pending {
+                        Text("Count \(WorkTimeLedger.display(pending.seconds)) away from input?")
+                            .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                        Text("Timer stays paused until you choose.").font(.system(size: 10)).foregroundStyle(.secondary)
+                        HStack {
+                            Button("Count & resume") { tracker.resolveIdle(include: true) }
+                            Button("Exclude & resume") { tracker.resolveIdle(include: false) }
+                        }.font(.system(size: 10))
+                    } else if tracker.project != nil {
+                        HStack {
+                            Button(tracker.active ? "Pause" : "Resume") {
+                                if tracker.active { tracker.pause() } else { tracker.resume() }
+                            }
+                            Button("Stop") { tracker.stop() }
+                        }.font(.system(size: 11))
                     }
-                    Text("Switch here when you change projects in the same app. Pauses when idle or using another app.")
+                    Text("Tracks across apps. After 5 minutes idle, review whether to count the time. Sleep and lock pause until you resume.")
                         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     HStack {
                         Text("All projects")
@@ -215,7 +295,8 @@ struct WorkTimeSummary: View {
                             }.font(.system(size: 9)).help(share.path)
                         }
                     }
-                    Text("Saved locally · background AI time excluded")
+                    SessionHistory(tracker: tracker, repositories: repositories)
+                    Text("Saved locally · previous totals preserved")
                         .font(.system(size: 9)).foregroundStyle(.secondary)
                 }.padding(16).frame(width: 275)
             }
@@ -245,19 +326,77 @@ struct ProjectTimeControls: View {
     let path: String
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Menu("Track time with…") {
-                    ForEach(tracker.availableApps, id: \.processIdentifier) { app in
-                        Button(app.localizedName ?? "App") { tracker.start(project: path, app: app) }
+            if tracker.project == path {
+                Text(tracker.status).font(.system(size: 9))
+                if tracker.store.pending == nil {
+                    HStack {
+                        Button(tracker.active ? "Pause" : "Resume") {
+                            if tracker.active { tracker.pause() } else { tracker.resume() }
+                        }
+                        Button("Stop") { tracker.stop() }
                     }
-                }.menuStyle(.borderlessButton).fixedSize().disabled(tracker.storageError != nil)
-                if tracker.project == path {
-                    Button("Stop") { tracker.stop() }.buttonStyle(.plain)
+                } else { Text("Review idle time in Work time above.").font(.system(size: 9)) }
+            } else {
+                Button("Start project session") { tracker.start(project: path) }
+                    .disabled(tracker.storageError != nil || tracker.store.pending != nil)
+            }
+            Text("Session follows you across apps.").font(.system(size: 8)).foregroundStyle(.secondary)
+        }.buttonStyle(.plain)
+    }
+}
+
+struct SessionHistory: View {
+    @ObservedObject var tracker: WorkTimeTracker
+    let repositories: [Repository]
+    @State private var showing = false
+    var body: some View {
+        Button("Session history…") { showing = true }
+            .font(.system(size: 11))
+            .sheet(isPresented: $showing) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Session history").font(.headline)
+                    Text("Pause to edit the current interval. Earlier totals have no session details.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(tracker.store.sessions.reversed()) { session in
+                                SessionEditor(tracker: tracker, repositories: repositories, session: session)
+                                    .disabled(session.id == tracker.store.currentID)
+                                Divider()
+                            }
+                        }
+                    }
+                    Button("Done") { showing = false }
+                }.padding(20).frame(width: 520, height: 440)
+            }
+    }
+}
+
+struct SessionEditor: View {
+    @ObservedObject var tracker: WorkTimeTracker
+    let repositories: [Repository]
+    let session: WorkSession
+    @State private var draft: WorkSession
+    init(tracker: WorkTimeTracker, repositories: [Repository], session: WorkSession) {
+        self.tracker = tracker; self.repositories = repositories; self.session = session
+        _draft = State(initialValue: session)
+    }
+    private var valid: Bool { tracker.canEdit(draft) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Project", selection: $draft.project) {
+                ForEach(Array(Set(repositories.map(\.path) + [session.project])).sorted(), id: \.self) { path in
+                    Text(URL(fileURLWithPath: path).lastPathComponent).tag(path)
                 }
             }
-            if tracker.project == path { Text("\(tracker.active ? "Tracking" : "Paused") · \(tracker.appName)").font(.system(size: 9)) }
-            Text("Select this project again when switching projects in the same app.")
-                .font(.system(size: 8)).foregroundStyle(.secondary)
-        }
+            DatePicker("Start", selection: $draft.start)
+            DatePicker("End", selection: $draft.end)
+            HStack {
+                Text(WorkTimeLedger.display(session.seconds)).font(.caption)
+                Spacer()
+                Button("Save changes") { tracker.edit(draft) }.disabled(!valid)
+            }
+            if !valid { Text("Use a past interval with end after start, without overlapping another session.").font(.caption) }
+        }.onChange(of: session.end) { _, value in draft.end = value }
     }
 }
