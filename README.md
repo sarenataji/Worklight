@@ -60,7 +60,7 @@ High usage is evidence to investigate, not proof of the cause of a slowdown. Dis
 
 ## Privacy
 
-No analytics, uploads, or cloud backend. Process data stays in memory on your Mac. Git fetch contacts the remotes already configured in your repositories. Only the chosen workspace path is saved in app preferences. The app is not sandboxed because it needs to read selected Git repositories and use your Git credentials.
+No analytics, uploads, or cloud backend. Process data stays in memory on your Mac. Git fetch contacts the remotes already configured in your repositories. The chosen workspace path, appearance, and per-project active-time totals are saved in app preferences. The app is not sandboxed because it needs to read selected Git repositories and use your Git credentials.
 
 ## Development and validation
 
@@ -76,3 +76,11 @@ Self-tests create disposable local repositories and verify remote discovery, fet
 `--diagnose` prints local repository state without fetching, plus CPU/memory diagnostics. `--render-preview` renders both native dashboard tabs and an expanded changed-file view into `dist/` for layout inspection; it uses the dashboard’s normal monitoring behavior. Previews and build output are excluded from Git.
 
 Source layout: `System.swift` handles Git and system sampling; `Model.swift` handles updates and app grouping; `Views.swift` contains the dashboard; `App.swift` defines the menu bar and window scenes.
+
+## Active work time
+
+Expand a project and choose **Track time with…**, then select a running app such as T3 Code, Paseo, or your editor. Worklight counts estimated active time for that project while the selected app is in front. Choose the timer again when switching projects inside the same app; automatic detection of T3 Code/Paseo's selected project is not available. Only one project/app session is timed at once. Checking Worklight's own popup keeps the last external app association.
+
+The display advances in seconds, with accounting sampled every five seconds. Time pauses after 60 seconds without input, when another app is focused, or during sleep/inactive sessions. Uncertain transition intervals are excluded. This estimates attention; it does not measure effort or prove that a particular file is being edited. Unattended AI runtime is not included as a separate metric. No window contents, messages, or keystrokes are recorded, and no Accessibility permission is needed for this explicit association.
+
+Per-project totals are stored locally in Worklight preferences every 30 seconds and when stopping, switching, sleeping, or quitting normally. An abrupt crash can lose the last unsaved interval. Select a project/app again after restarting; tracking never silently resumes against an unknown project. Use the header time readout to see tracking status or stop a session.

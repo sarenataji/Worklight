@@ -91,6 +91,7 @@ struct DashboardView: View {
             if tab == 1 { Image(systemName: "sun.max").font(.system(size: 19, weight: .medium)).foregroundStyle(palette.lime)
                 .frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line)) }
             Text("Worklight").font(.system(size: 14, weight: .semibold))
+            if tab == 0 { WorkTimeSummary(tracker: .shared, repositories: model.repositories) }
             Spacer()
             Circle().fill(model.history.isEmpty ? palette.muted : palette.lime).frame(width: 5, height: 5)
                 .accessibilityLabel(model.history.isEmpty ? "Starting monitoring" : "Monitoring your Mac")
@@ -123,14 +124,6 @@ struct DashboardView: View {
             tabButton("Projects", index: 0)
             tabButton("Your Mac", index: 1)
             Spacer()
-            if tab == 0 {
-                Button { model.notice = "Active work-time tracking is not connected yet. Time will exclude idle time and keep AI runtime separate. Git history cannot reconstruct time worked." } label: {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Time · Not tracked").font(.system(size: 9)).foregroundStyle(palette.muted)
-                        Capsule().fill(palette.line).frame(width: 82, height: 3)
-                    }
-                }.buttonStyle(.plain).help("Work-time tracking is not connected")
-            }
         }.padding(.horizontal, 16).frame(height: 38)
             .overlay(alignment: .bottom) { rule }
     }
@@ -294,8 +287,11 @@ struct DashboardView: View {
                     Image(systemName: "folder").font(.system(size: 18, weight: .medium)).foregroundStyle(color).frame(width: 29, height: 29)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(repo.name).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                        Label(repo.branch.isEmpty ? "No branch" : repo.branch, systemImage: "arrow.triangle.branch")
-                            .font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Label(repo.branch.isEmpty ? "No branch" : repo.branch, systemImage: "arrow.triangle.branch")
+                                .font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                            ProjectWorkTime(tracker: .shared, path: repo.path)
+                        }
                         Text(label).font(.system(size: 9)).foregroundStyle(color).lineLimit(1)
                         if repo.changed > 0 && label != "\(repo.changed) changed files" {
                             Text("\(repo.changed) changed files").font(.system(size: 9)).foregroundStyle(palette.pink)
@@ -312,6 +308,7 @@ struct DashboardView: View {
     }
     private func repositoryDetails(_ repo: Repository) -> some View {
         VStack(alignment: .leading, spacing: 9) {
+            ProjectTimeControls(tracker: .shared, path: repo.path)
             HStack(spacing: 9) {
                 Text("↓ \(repo.behind) incoming").foregroundStyle(palette.violet)
                 Text("↑ \(repo.ahead) outgoing").foregroundStyle(palette.violet)
