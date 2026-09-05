@@ -313,11 +313,11 @@ struct DashboardView: View {
         }.font(.system(size: 10))
     }
     private var performance: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(model.performance.memoryLevel >= 2 ? "Memory is worth a look." : "What’s using your Mac?")
+                Text(model.performance.memoryLevel >= 2 ? "Memory is worth a look." : "What’s running on your Mac?")
                     .font(.system(size: 13, weight: .semibold))
-                Text("Only likely contributors with resource evidence appear here.").font(.system(size: 10)).foregroundStyle(palette.muted)
+                Text("Live CPU and memory use for detected apps and processes.").font(.system(size: 10)).foregroundStyle(palette.muted)
             }
             HStack(spacing: 10) {
                 HStack(spacing: 5) {
@@ -330,50 +330,55 @@ struct DashboardView: View {
             if let error = model.performance.error { Text(error).font(.system(size: 10)).foregroundStyle(palette.amber) }
             if filteredApps.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(search.isEmpty ? "No clear contributor identified" : "No matching contributors", systemImage: "checkmark.circle").foregroundStyle(palette.mint)
-                    Text("Watching for sustained CPU usage and large memory users when pressure is elevated.").font(.system(size: 10)).foregroundStyle(palette.muted)
+                    Label(search.isEmpty ? "Waiting for activity" : "No matching apps or processes", systemImage: search.isEmpty ? "clock" : "magnifyingglass").foregroundStyle(palette.mint)
+                    Text(search.isEmpty ? "Worklight is collecting the first live sample." : "Try another app name, process name, or PID.").font(.system(size: 10)).foregroundStyle(palette.muted)
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(palette.surface, in: RoundedRectangle(cornerRadius: 10))
             } else {
-                LazyVStack(spacing: 8) { ForEach(filteredApps.prefix(40)) { usage in processCard(usage) } }
+                HStack {
+                    Text("APP / PROCESS")
+                    Spacer()
+                    Text("CPU").frame(width: 52, alignment: .trailing)
+                    Text("MEMORY").frame(width: 64, alignment: .trailing)
+                }.font(.system(size: 8, weight: .semibold)).foregroundStyle(palette.muted).padding(.horizontal, 10)
+                LazyVStack(spacing: 5) { ForEach(filteredApps.prefix(40)) { usage in processCard(usage) } }
             }
-            Text("These are likely contributors, not a confirmed cause. Memory bars compare shown apps, not total RAM. Process CPU: 100% = one core. Swap: \(model.performance.swapGB, specifier: "%.1f") GB; swap alone doesn’t mean your Mac is currently struggling.")
+            Text("Live estimates, not a diagnosis. Memory bars compare shown apps, not total RAM. Process CPU: 100% = one core. Swap: \(model.performance.swapGB, specifier: "%.1f") GB; swap alone doesn’t mean your Mac is currently struggling.")
                 .font(.system(size: 9)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
             Button("Open Activity Monitor ↗") { model.activityMonitor() }.buttonStyle(NeonButtonStyle())
             Text("Quit controls are for your non-system desktop apps. Inspect other processes in Activity Monitor.").font(.system(size: 9)).foregroundStyle(palette.muted)
         }
     }
     private var filteredApps: [AppUsage] {
-        model.contributors.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.processes.contains { $0.command.localizedCaseInsensitiveContains(search) || String($0.pid).contains(search) } }
+        model.apps.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.processes.contains { $0.command.localizedCaseInsensitiveContains(search) || String($0.pid).contains(search) } }
             .sorted { sortMemory ? $0.memoryMB > $1.memoryMB : $0.cpu > $1.cpu }
     }
     private func processCard(_ usage: AppUsage) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                if let icon = usage.icon { Image(nsImage: icon).resizable().frame(width: 26, height: 26) }
-                else { Image(systemName: "terminal").font(.system(size: 18)).foregroundStyle(palette.violet).frame(width: 26, height: 26) }
-                Text(usage.name).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 4)
-                Text(sortMemory ? memoryAmount(usage.memoryMB) : String(format: "%.1f%%", usage.cpu))
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(sortMemory ? palette.pink : palette.lime).fixedSize()
-            }
-            GeometryReader { geo in
-                RoundedRectangle(cornerRadius: 2).fill(palette.line).overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2).fill(sortMemory ? palette.pink : palette.lime)
-                        .frame(width: geo.size.width * min(1, max(0.005, sortMemory ? usage.memoryMB / max(1, filteredApps.first?.memoryMB ?? 1) : usage.cpu / Double(ProcessInfo.processInfo.processorCount * 100))))
-                }
-            }.frame(height: 3).accessibilityHidden(true)
-            ForEach(model.reasons(for: usage), id: \.self) { reason in Text(reason).font(.system(size: 10)).foregroundStyle(palette.muted) }
-            HStack {
-                Text(sortMemory ? String(format: "%.1f%% CPU · %d processes", usage.cpu, usage.processes.count) : "\(memoryAmount(usage.memoryMB)) · \(usage.processes.count) processes")
-                    .font(.system(size: 9)).foregroundStyle(palette.muted)
-                Spacer()
-                if usage.canQuit { Button("Review quit") { forceQuit = false; pendingQuit = usage }.buttonStyle(NeonButtonStyle()) }
-            }
+        VStack(alignment: .leading, spacing: 7) {
             Button { expandedApp = expandedApp == usage.id ? nil : usage.id } label: {
-                Label("See process details", systemImage: expandedApp == usage.id ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9)).foregroundStyle(palette.muted)
-            }.buttonStyle(.plain).accessibilityValue(expandedApp == usage.id ? "Expanded" : "Collapsed")
+                HStack(spacing: 7) {
+                    if let icon = usage.icon { Image(nsImage: icon).resizable().frame(width: 22, height: 22) }
+                    else { Image(systemName: "terminal").font(.system(size: 15)).foregroundStyle(palette.violet).frame(width: 22, height: 22) }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(usage.name).font(.system(size: 10, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                        Text("\(usage.processes.count) \(usage.processes.count == 1 ? "process" : "processes")")
+                            .font(.system(size: 8)).foregroundStyle(palette.muted)
+                    }
+                    Spacer(minLength: 3)
+                    Text(String(format: "%.1f%%", usage.cpu)).foregroundStyle(sortMemory ? palette.muted : palette.lime)
+                        .frame(width: 52, alignment: .trailing)
+                    Text(memoryAmount(usage.memoryMB)).foregroundStyle(sortMemory ? palette.pink : palette.muted)
+                        .frame(width: 64, alignment: .trailing)
+                    Image(systemName: expandedApp == usage.id ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(palette.muted).frame(width: 8)
+                }.font(.system(size: 10, weight: .semibold).monospacedDigit())
+            }.buttonStyle(.plain)
+                .accessibilityLabel("\(usage.name), \(String(format: "%.1f", usage.cpu)) percent CPU, \(memoryAmount(usage.memoryMB)), \(usage.processes.count) processes")
+                .accessibilityValue(expandedApp == usage.id ? "Expanded" : "Collapsed")
+            ForEach(model.reasons(for: usage), id: \.self) { reason in
+                Label(reason, systemImage: "exclamationmark.circle").font(.system(size: 9)).foregroundStyle(palette.amber)
+            }
             if expandedApp == usage.id {
+                rule
                 ForEach(usage.processes.sorted { sortMemory ? $0.memoryMB > $1.memoryMB : $0.cpu > $1.cpu }.prefix(30)) { process in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -387,10 +392,15 @@ struct DashboardView: View {
                 }
                 if usage.processes.count > 30 { Text("Showing 30 of \(usage.processes.count) processes. See Activity Monitor for all.").font(.system(size: 9)).foregroundStyle(palette.muted) }
                 Text("Memory totals may count shared pages more than once.").font(.system(size: 9)).foregroundStyle(palette.muted)
-                if usage.canQuit { Button("Force quit…") { forceQuit = true; pendingQuit = usage }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(palette.amber) }
+                if usage.canQuit {
+                    HStack {
+                        Button("Review quit") { forceQuit = false; pendingQuit = usage }.buttonStyle(NeonButtonStyle())
+                        Button("Force quit…") { forceQuit = true; pendingQuit = usage }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(palette.amber)
+                    }
+                }
             }
-        }.padding(12).background(palette.surface, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.line))
+        }.padding(.horizontal, 10).padding(.vertical, 7).background(palette.surface, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line))
     }
     private func memoryAmount(_ mb: Double) -> String { mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : String(format: "%.0f MB", mb) }
     private var memoryColor: Color { model.performance.memoryLevel == 1 ? palette.mint : model.performance.memoryLevel == 0 ? palette.muted : palette.amber }

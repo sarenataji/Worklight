@@ -24,7 +24,7 @@ Version 0.2 uses a 440 × 560 point panel, with black/charcoal surfaces and unfi
 
 Five collapsed project rows fit without scrolling. Click a row to reveal commit counts, changed-file paths, staging details, editor shortcuts, and guarded pull actions. The small header refresh button fetches remote changes. Status explanations sit below the projects.
 
-CPU and memory stay in a narrow bottom strip: click the CPU sparkline for recent activity, or click memory to see likely contributors in **Your Mac**. Memory pressure also adds a compact callout below the projects. The app never labels resource usage as a proven cause of a slowdown. Quit confirmations, process details, search, sorting, and Activity Monitor remain available.
+CPU and memory stay in a narrow bottom strip: click the CPU sparkline for recent activity, or open **Your Mac** to see live CPU and memory use for detected apps and processes. Memory pressure also adds a compact callout below the projects. The app never labels resource usage as a proven cause of a slowdown. Quit confirmations, process details, search, sorting, and Activity Monitor remain available.
 
 ## Projects
 
@@ -50,7 +50,7 @@ Open a project in Finder or VS Code, or view its tracked remote (origin when no 
 - App totals group processes using running application identities, parent relationships, and bundle paths. Attribution is best effort; some detached helpers remain separate.
 - Memory pressure comes from the kernel. Swap displays allocated swap usage, not a claim that swapping is currently causing a slowdown.
 - Sampling runs about every three seconds while the dashboard is visible and every fifteen seconds otherwise. The chart contains the latest 40 samples, not a fixed duration.
-- The list focuses on likely contributors: 80%+ process CPU across samples at least ten seconds apart; 40%+ process CPU while overall CPU is at least 75%; or at least 512 MB resident memory while kernel memory pressure is elevated. These thresholds select investigation candidates, not proven causes. Healthy/low-resource entries are hidden.
+- The list shows detected apps and processes with their live CPU and resident-memory estimates. It adds attention notes at 80%+ process CPU across samples at least ten seconds apart; 40%+ process CPU while overall CPU is at least 75%; or at least 512 MB resident memory while kernel memory pressure is elevated. These thresholds flag investigation candidates, not proven causes.
 - Sort by CPU or memory, search names or PIDs, and expand an app to inspect executable paths and its busiest processes. Memory is summed resident memory and may count shared pages more than once.
 - Normal quit and confirmed force quit are available for your non-system desktop apps. Force quit can lose unsaved work. Background/system processes are inspectable here and manageable in Activity Monitor; Worklight does not terminate them.
 
