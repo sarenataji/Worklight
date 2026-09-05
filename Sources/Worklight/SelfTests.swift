@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 @MainActor
 enum SelfTests {
@@ -13,8 +14,24 @@ enum SelfTests {
         model.performance.cpu = 20
         model.performance.memoryLevel = 1
         check(model.reasons(for: usage).isEmpty, "Healthy usage is filtered out")
+        check(model.belongsInBackground(usage), "Quiet iconless process belongs in collapsed background section")
+        model.apps = [usage]
+        check(model.matchingApps(search: "  TEST  ", sortMemory: false).count == 1, "Search includes background names and trims whitespace")
+        check(model.matchingApps(search: "123", sortMemory: true).count == 1, "Search finds background PID")
+        check(model.matchingApps(search: "/test/app", sortMemory: false).count == 1, "Search finds process command")
+        check(model.matchingApps(search: "missing", sortMemory: false).isEmpty, "Unmatched search is empty")
+        let iconApp = AppUsage(id: "icon", name: "Desktop app", icon: NSImage(size: NSSize(width: 22, height: 22)), application: nil, processes: usage.processes)
+        check(!model.belongsInBackground(iconApp), "Apps with icons stay visible")
+        let idle = AppUsage(id: "idle", name: "Idle app", icon: iconApp.icon, application: nil, processes: [ProcessRow(pid: 456, parent: 1, uid: getuid(), cpu: 0, memoryMB: 2048, command: "/idle/app")])
+        let roundedZero = AppUsage(id: "tiny", name: "Tiny CPU", icon: nil, application: nil, processes: [ProcessRow(pid: 789, parent: 1, uid: getuid(), cpu: 0.01, memoryMB: 1, command: "/tiny/app")])
+        model.apps = [usage, idle, roundedZero]
+        check(model.matchingApps(search: "", sortMemory: false).map(\.id) == [usage.id], "Zero and displayed-zero CPU rows are hidden")
+        check(model.matchingApps(search: "  ", sortMemory: true).map(\.id) == [usage.id], "Idle rows stay hidden when sorting memory or searching whitespace")
+        check(model.matchingApps(search: "idle", sortMemory: false).map(\.id) == [idle.id], "Search reveals idle apps")
+        check(model.matchingApps(search: "789", sortMemory: false).map(\.id) == [roundedZero.id], "Search reveals idle background PID")
         model.performance.memoryLevel = 2
         check(model.reasons(for: usage).count == 1, "Large memory user flagged only under pressure")
+        check(!model.belongsInBackground(usage), "Background memory contributor remains visible under pressure")
         model.performance.cpu = 80
         check(model.reasons(for: usage).count == 2, "CPU contributor has supporting overall CPU evidence")
         check(!usage.canQuit, "Raw background process cannot be quit")

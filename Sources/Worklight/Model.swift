@@ -135,6 +135,22 @@ final class DashboardModel: ObservableObject {
         return reasons
     }
     var contributors: [AppUsage] { apps.filter { !reasons(for: $0).isEmpty } }
+    func belongsInBackground(_ usage: AppUsage) -> Bool {
+        usage.icon == nil && usage.application?.activationPolicy != .regular && reasons(for: usage).isEmpty
+    }
+    func matchingApps(search: String, sortMemory: Bool) -> [AppUsage] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return apps.filter { usage in
+            if query.isEmpty { return String(format: "%.1f", usage.cpu) != "0.0" }
+            return usage.name.localizedCaseInsensitiveContains(query) || usage.processes.contains {
+                $0.command.localizedCaseInsensitiveContains(query) || String($0.pid).contains(query)
+            }
+        }.sorted {
+            let left = sortMemory ? $0.memoryMB : $0.cpu
+            let right = sortMemory ? $1.memoryMB : $1.cpu
+            return left == right ? $0.id < $1.id : left > right
+        }
+    }
     func activityMonitor() { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app")) }
     private func group(_ rows: [ProcessRow]) -> [AppUsage] {
         let running = NSWorkspace.shared.runningApplications

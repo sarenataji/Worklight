@@ -37,6 +37,7 @@ struct DashboardView: View {
     @State private var showLegend = false
     @State private var showCPU = false
     @State private var search = ""
+    @State private var showBackground = false
     @State private var sortMemory: Bool
     @State private var pendingQuit: AppUsage?
     @State private var forceQuit = false
@@ -313,11 +314,15 @@ struct DashboardView: View {
         }.font(.system(size: 10))
     }
     private var performance: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let matches = model.matchingApps(search: search, sortMemory: sortMemory)
+        let searching = !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let foreground = matches.filter { !model.belongsInBackground($0) }
+        let background = matches.filter { model.belongsInBackground($0) }
+        return VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.performance.memoryLevel >= 2 ? "Memory is worth a look." : "What’s running on your Mac?")
                     .font(.system(size: 13, weight: .semibold))
-                Text("Live CPU and memory use for detected apps and processes.").font(.system(size: 10)).foregroundStyle(palette.muted)
+                Text("Showing active CPU use. Search also finds idle apps and background processes.").font(.system(size: 10)).foregroundStyle(palette.muted)
             }
             HStack(spacing: 10) {
                 HStack(spacing: 5) {
@@ -328,10 +333,10 @@ struct DashboardView: View {
                     .pickerStyle(.segmented).frame(width: 113).controlSize(.mini).labelsHidden()
             }
             if let error = model.performance.error { Text(error).font(.system(size: 10)).foregroundStyle(palette.amber) }
-            if filteredApps.isEmpty {
+            if matches.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(search.isEmpty ? "Waiting for activity" : "No matching apps or processes", systemImage: search.isEmpty ? "clock" : "magnifyingglass").foregroundStyle(palette.mint)
-                    Text(search.isEmpty ? "Worklight is collecting the first live sample." : "Try another app name, process name, or PID.").font(.system(size: 10)).foregroundStyle(palette.muted)
+                    Label(searching ? "No matching apps or processes" : (model.apps.isEmpty ? "Waiting for activity" : "No active CPU use"), systemImage: searching ? "magnifyingglass" : "clock").foregroundStyle(palette.mint)
+                    Text(searching ? "Try another app name, process name, or PID." : (model.apps.isEmpty ? "Worklight is collecting the first live sample." : "Apps showing 0.0% CPU are hidden. Search to find them.")).font(.system(size: 10)).foregroundStyle(palette.muted)
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(palette.surface, in: RoundedRectangle(cornerRadius: 10))
             } else {
                 HStack {
@@ -340,17 +345,32 @@ struct DashboardView: View {
                     Text("CPU").frame(width: 52, alignment: .trailing)
                     Text("MEMORY").frame(width: 64, alignment: .trailing)
                 }.font(.system(size: 8, weight: .semibold)).foregroundStyle(palette.muted).padding(.horizontal, 10)
-                LazyVStack(spacing: 5) { ForEach(filteredApps.prefix(40)) { usage in processCard(usage) } }
+                LazyVStack(spacing: 5) {
+                    ForEach(searching ? matches : foreground) { usage in processCard(usage) }
+                }
+                if !searching && !background.isEmpty {
+                    Button { showBackground.toggle() } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "terminal").foregroundStyle(palette.violet)
+                            Text("Background processes")
+                            Text("\(background.count)").foregroundStyle(palette.muted)
+                            Spacer()
+                            Image(systemName: showBackground ? "chevron.down" : "chevron.right").foregroundStyle(palette.muted)
+                        }.font(.system(size: 10, weight: .medium)).padding(10).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .background(palette.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .accessibilityLabel("Background processes, \(background.count)")
+                        .accessibilityValue(showBackground ? "Expanded" : "Collapsed")
+                    if showBackground {
+                        LazyVStack(spacing: 5) { ForEach(background) { usage in processCard(usage) } }
+                    }
+                }
             }
             Text("Live estimates, not a diagnosis. Memory bars compare shown apps, not total RAM. Process CPU: 100% = one core. Swap: \(model.performance.swapGB, specifier: "%.1f") GB; swap alone doesn’t mean your Mac is currently struggling.")
                 .font(.system(size: 9)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
             Button("Open Activity Monitor ↗") { model.activityMonitor() }.buttonStyle(NeonButtonStyle())
             Text("Quit controls are for your non-system desktop apps. Inspect other processes in Activity Monitor.").font(.system(size: 9)).foregroundStyle(palette.muted)
         }
-    }
-    private var filteredApps: [AppUsage] {
-        model.apps.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.processes.contains { $0.command.localizedCaseInsensitiveContains(search) || String($0.pid).contains(search) } }
-            .sorted { sortMemory ? $0.memoryMB > $1.memoryMB : $0.cpu > $1.cpu }
     }
     private func processCard(_ usage: AppUsage) -> some View {
         VStack(alignment: .leading, spacing: 7) {
