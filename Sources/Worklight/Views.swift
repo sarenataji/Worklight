@@ -221,6 +221,30 @@ struct DashboardView: View {
                 Text("↑ \(repo.ahead) outgoing").foregroundStyle(palette.violet)
                 Text("\(repo.changed) changed files").foregroundStyle(palette.pink)
             }.font(.system(size: 9))
+            if let activity = repo.activity {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text(activity.title)
+                        if let date = activity.pushedAt {
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
+                                if context.date.timeIntervalSince(date) < 60 {
+                                    Text("· just now")
+                                } else {
+                                    Text("· \(date, style: .relative) ago")
+                                }
+                            }
+                        }
+                    }.font(.system(size: 10, weight: .medium)).foregroundStyle(palette.mint)
+                    if let url = repo.remoteURL {
+                        Link(destination: url.appendingPathComponent("commit").appendingPathComponent(activity.hash)) {
+                            Text(activity.summary).lineLimit(2).multilineTextAlignment(.leading)
+                        }.help("View commit on GitHub").accessibilityLabel("View commit on GitHub: \(activity.summary)")
+                    } else {
+                        Text(activity.summary).lineLimit(2).textSelection(.enabled)
+                    }
+                }.font(.system(size: 9)).foregroundStyle(palette.muted)
+                .help(activity.pushedAt == nil ? "Latest commit on the locally tracked remote branch; no push from this clone could be confirmed." : "Latest push recorded by Git in this clone. This does not indicate whether someone else has pulled.")
+            }
             if let error = repo.error {
                 Text("Couldn’t verify updates. \(error)").foregroundStyle(palette.amber).textSelection(.enabled)
             } else if repo.upstream.isEmpty {

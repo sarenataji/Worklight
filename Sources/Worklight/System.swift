@@ -77,6 +77,19 @@ struct ChangedFile: Identifiable {
     }
 }
 
+struct CommitActivity {
+    let hash: String
+    let subject: String
+    var pushedAt: Date?
+    var pushedCount: Int?
+    var title: String {
+        guard pushedAt != nil else { return "Latest remote commit" }
+        guard let count = pushedCount else { return "↑ Pushed" }
+        return "↑ Pushed \(count) commit\(count == 1 ? "" : "s")"
+    }
+    var summary: String { "\(subject) · \(hash.prefix(7))" }
+}
+
 struct Repository: Identifiable {
     var id: String { path }
     var path: String
@@ -91,6 +104,7 @@ struct Repository: Identifiable {
     var error: String?
     var checked: Date?
     var remoteURL: URL?
+    var activity: CommitActivity?
     var canPull: Bool { error == nil && !upstream.isEmpty && behind > 0 && ahead == 0 && changed == 0 && branch != "(detached)" }
     var headline: String {
         if error != nil { return "Check needed" }
@@ -121,6 +135,48 @@ struct Repository: Identifiable {
 }
 
 func git(_ args: [String], path: String) -> CommandResult { run("/usr/bin/git", args, at: path, timeout: 25) }
+
+// Only an explicit push reflog entry establishes a push, never a fetch or commit date.
+func inspectCommitActivity(path: String, upstream: String) -> CommitActivity? {
+    guard upstream.hasPrefix("refs/remotes/") else { return nil }
+    let push = git(["reflog", "show", "-1", "--date=unix", "--grep-reflog=^update by push$", "--format=%H%x00%gD%x00%gs", upstream], path: path)
+    var hash = upstream
+    var pushedAt: Date?
+    var previousHash: String?
+    let entry = push.output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+    if push.status == 0, entry.count == 3, entry[2] == "update by push",
+       let start = entry[1].range(of: "@{", options: .backwards), entry[1].hasSuffix("}"),
+       let seconds = TimeInterval(entry[1][start.upperBound...].dropLast()) {
+        hash = entry[0]
+        pushedAt = Date(timeIntervalSince1970: seconds)
+        // The old tip is stored in this event, even if no earlier reflog entry
+        // exists (common after cloning). Never infer it from an adjacent event.
+        let logPath = git(["rev-parse", "--git-path", "logs/" + upstream], path: path)
+        let logURL = URL(fileURLWithPath: logPath.output, relativeTo: URL(fileURLWithPath: path, isDirectory: true))
+        if logPath.status == 0, let log = try? String(contentsOf: logURL, encoding: .utf8) {
+            for line in log.split(separator: "\n").reversed() {
+                let parts = line.split(separator: "\t", maxSplits: 1)
+                guard parts.count == 2, parts[1] == "update by push" else { continue }
+                let fields = parts[0].split(separator: " ")
+                if fields.count >= 6, fields[1] == hash, TimeInterval(fields[fields.count - 2]) == seconds {
+                    previousHash = String(fields[0])
+                    break
+                }
+            }
+        }
+    }
+    let commit = git(["show", "-s", "--format=%H%x00%s", hash, "--"], path: path)
+    let fields = commit.output.split(separator: "\0", maxSplits: 1, omittingEmptySubsequences: false)
+    guard commit.status == 0, fields.count == 2 else { return nil }
+    var activity = CommitActivity(hash: String(fields[0]), subject: String(fields[1]), pushedAt: pushedAt)
+    // Initial pushes and rewritten history omit counts rather than guessing.
+    if let previousHash, git(["merge-base", "--is-ancestor", previousHash, activity.hash], path: path).status == 0 {
+        let count = git(["rev-list", "--count", "\(previousHash)..\(activity.hash)"], path: path)
+        if count.status == 0, let value = Int(count.output), value > 0 { activity.pushedCount = value }
+    }
+    return activity
+}
+
 func inspectRepository(_ path: String, fetch: Bool) -> Repository {
     var fetchError: String?
     let initial = git(["status", "--porcelain=v2", "--branch", "--untracked-files=normal"], path: path)
@@ -142,7 +198,12 @@ func inspectRepository(_ path: String, fetch: Bool) -> Repository {
         repo.changed = repo.files.count
     } else { repo.error = files.output }
     if fetch && repo.error == nil && !repo.upstream.isEmpty { repo.checked = Date() }
-    let remote = git(["remote", "get-url", "origin"], path: path)
+    if !repo.upstream.isEmpty {
+        let upstream = git(["rev-parse", "--symbolic-full-name", "@{upstream}"], path: path)
+        if upstream.status == 0 { repo.activity = inspectCommitActivity(path: path, upstream: upstream.output) }
+    }
+    let trackedRemote = git(["config", "--get", "branch.\(repo.branch).remote"], path: path)
+    let remote = git(["remote", "get-url", trackedRemote.status == 0 ? trackedRemote.output : "origin"], path: path)
     if remote.status == 0 {
         var address = remote.output
         if address.hasPrefix("git@github.com:") { address = address.replacingOccurrences(of: "git@github.com:", with: "https://github.com/") }

@@ -32,6 +32,7 @@ Starts with `~/Desktop/apps`; change it using the header’s menu. Discovery sea
 
 - **Incoming:** commits on the tracked remote branch that your local branch lacks.
 - **Outgoing:** local commits not on the tracked branch.
+- **Pushed:** the latest successful push recorded in this clone’s Git reflog for the tracked remote branch, with its actual push time and a linked commit on GitHub. A commit count appears when the previous remote tip establishes a fast-forward range. Later fetches leave this push visible; expired or unavailable push records fall back to **Latest remote commit**, without claiming when it was pushed. This does not track whether collaborators have pulled. Activity updates during normal checks or manual refresh.
 - **Edited files:** tracked changes plus individual untracked files. Expand the file list to see paths, modification types, and staging state.
 - **Updates available:** incoming work exists. Pull is enabled only when the branch is clean and has no outgoing commits.
 - **Diverged:** both sides have new commits; review in your editor.
@@ -40,7 +41,7 @@ Starts with `~/Desktop/apps`; change it using the header’s menu. Discovery sea
 
 Every five minutes, Worklight fetches the tracked branch’s remote using your existing Git credentials. It never stages, commits, pushes, resets, stashes, or automatically pulls. A pull requires an explicit click and confirmation, then rechecks the repository and uses fast-forward-only Git behavior. Avoid editing the same repository during a pull; Git remains the final arbiter of concurrent changes.
 
-Open a project in Finder or VS Code, or view its origin on GitHub. The T3 Code shortcut launches the installed nightly app and copies the project path for selecting/adding it there; automatic project selection via deep link is not implemented.
+Open a project in Finder or VS Code, or view its tracked remote (origin when no tracking branch is configured) on GitHub. The T3 Code shortcut launches the installed nightly app and copies the project path for selecting/adding it there; automatic project selection via deep link is not implemented.
 
 ## Performance
 
