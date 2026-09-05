@@ -9,8 +9,22 @@ enum SelfTests {
             guard condition() else { fputs("FAIL: \(message)\n", stderr); exit(1) }
             count += 1
         }
-        let activity = ProjectFileActivity.parse("2\t3\tfile with spaces.swift\n1\t0\tfile with spaces.swift\n-\t-\timage.png\ninvalid\n", repository: "/fixture")
-        check(activity.count == 1 && activity[0].lines == 6 && activity[0].path == "file with spaces.swift", "Activity aggregates repeated paths and skips binary or malformed stats")
+        var categoryRepo = Repository(path: "/fixture")
+        check(ProjectCategory.classify(categoryRepo) == .unverified, "Unknown tracking is never up to date")
+        categoryRepo.upstream = "origin/main"; categoryRepo.checked = Date()
+        check(ProjectCategory.classify(categoryRepo) == .current, "Verified clean project is current")
+        categoryRepo.changed = 2
+        check(ProjectCategory.classify(categoryRepo) == .working, "Local edits are work in progress")
+        categoryRepo.changed = 0; categoryRepo.ahead = 1
+        check(ProjectCategory.classify(categoryRepo) == .working, "Outgoing commits are work in progress")
+        categoryRepo.behind = 1
+        check(ProjectCategory.classify(categoryRepo) == .attention, "Divergence needs attention")
+        categoryRepo.ahead = 0
+        check(ProjectCategory.classify(categoryRepo) == .attention, "Incoming updates need attention")
+        categoryRepo.checked = nil
+        check(ProjectCategory.classify(categoryRepo) == .unverified, "Unverified remote counts are not classified as current")
+        categoryRepo.error = "Offline"
+        check(ProjectCategory.classify(categoryRepo) == .attention, "Failed checks need attention")
         let model = DashboardModel()
         let usage = AppUsage(id: "test", name: "Test app", icon: nil, application: nil, processes: [ProcessRow(pid: 123, parent: 1, uid: getuid(), cpu: 45, memoryMB: 1024, command: "/test/app")])
         model.performance.cpu = 20
@@ -60,10 +74,6 @@ enum SelfTests {
         command(["checkout", "-b", "main"], local)
         try! "first".write(toFile: local + "/file.txt", atomically: true, encoding: .utf8)
         command(["add", "."], local); command(["commit", "-m", "Initial"], local)
-        let collected = collectProjectActivity([local])
-        check(collected.failed == 0 && collected.files.count == 1 && collected.files[0].lines == 1, "Activity reads committed lines from temporary repository")
-        let unavailable = collectProjectActivity([root.appendingPathComponent("missing").path])
-        check(unavailable.failed == 1 && unavailable.files.isEmpty, "Unavailable history is not presented as verified activity")
         command(["push", "-u", "origin", "main"], local)
         let initialPush = inspectRepository(local, fetch: false).activity
         check(initialPush?.pushedAt != nil && initialPush?.subject == "Initial", "Initial push confirmed from reflog")

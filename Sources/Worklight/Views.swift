@@ -34,6 +34,7 @@ struct DashboardView: View {
     @State private var tab: Int
     @State private var expandedRepository: String?
     @State private var expandedApp: String?
+    @State private var projectFilter: ProjectCategory?
     @State private var showLegend = false
     @State private var showCPU = false
     @State private var search = ""
@@ -169,11 +170,14 @@ struct DashboardView: View {
                 }.frame(maxWidth: .infinity).padding(20).background(palette.surface, in: RoundedRectangle(cornerRadius: 12))
             } else {
                 VStack(spacing: 0) {
-                    ForEach(model.repositories) { repo in
+                    ForEach(filteredRepositories) { repo in
                         repoRow(repo)
-                        if repo.id != model.repositories.last?.id { rule }
+                        if repo.id != filteredRepositories.last?.id { rule }
                     }
                 }
+            }
+            if filteredRepositories.isEmpty && !model.repositories.isEmpty {
+                Text("No projects in this category.").foregroundStyle(palette.muted).padding(.vertical, 10)
             }
             if model.performance.memoryLevel >= 2 { memoryNudge }
             HStack {
@@ -197,44 +201,53 @@ struct DashboardView: View {
             }
         }
     }
-    private var activityColors: [Color] { [palette.pink, palette.violet, palette.mint, palette.muted] }
+    private var filteredRepositories: [Repository] {
+        model.repositories.filter { projectFilter == nil || ProjectCategory.classify($0) == projectFilter }
+    }
+    private func categoryColor(_ category: ProjectCategory) -> Color {
+        switch category {
+        case .attention: return palette.amber
+        case .working: return palette.pink
+        case .current: return palette.mint
+        case .unverified: return palette.muted
+        }
+    }
     private var projectActivity: some View {
-        let files = Array(model.fileActivity.prefix(3))
-        let total = model.fileActivity.reduce(0) { $0 + $1.lines }
-        let values = files.map(\.lines) + [max(0, total - files.reduce(0) { $0 + $1.lines })]
+        let categories = ProjectCategory.allCases
+        let counts = categories.map { category in model.repositories.filter { ProjectCategory.classify($0) == category }.count }
+        let total = model.repositories.count
         return HStack(spacing: 14) {
             ZStack {
                 Circle().stroke(palette.line, lineWidth: 5)
-                ForEach(values.indices, id: \.self) { index in
-                    let start = Double(values.prefix(index).reduce(0, +)) / Double(max(1, total))
-                    let end = start + Double(values[index]) / Double(max(1, total))
+                ForEach(categories.indices, id: \.self) { index in
+                    let start = Double(counts.prefix(index).reduce(0, +)) / Double(max(1, total))
+                    let end = start + Double(counts[index]) / Double(max(1, total))
                     Circle().trim(from: start, to: max(start, end - min(0.012, (end - start) / 4)))
-                        .stroke(activityColors[index], style: StrokeStyle(lineWidth: 5, lineCap: .butt))
+                        .stroke(categoryColor(categories[index]), style: StrokeStyle(lineWidth: 5))
                         .rotationEffect(.degrees(-90))
                 }
-                VStack(spacing: 1) {
-                    Text("\(total)").font(.system(size: 16, weight: .semibold)).monospacedDigit()
-                    Text("lines").font(.system(size: 8)).foregroundStyle(palette.muted)
-                }
-            }.frame(width: 66, height: 66).accessibilityLabel("\(total) committed lines added and deleted in the past seven days")
+                Text("Projects").font(.system(size: 10, weight: .medium))
+            }.frame(width: 66, height: 66).accessibilityLabel("Project status overview, \(total) projects")
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
-                    Text("Most changed files").font(.system(size: 10, weight: .semibold))
+                    Text("Projects at a glance").font(.system(size: 10, weight: .semibold))
                     Spacer()
-                    Text("Past 7 days").font(.system(size: 8)).foregroundStyle(palette.muted)
+                    Button("Show all") { projectFilter = nil }.buttonStyle(.plain)
+                        .font(.system(size: 9)).foregroundStyle(palette.lime)
                 }
-                ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
-                    HStack(spacing: 5) {
-                        Circle().fill(activityColors[index]).frame(width: 4, height: 4)
-                        Text(URL(fileURLWithPath: file.path).lastPathComponent).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Text("\(file.lines)").monospacedDigit()
-                    }.font(.system(size: 9)).help("\(file.repository)/\(file.path): \(file.lines) lines added + deleted")
+                ForEach(categories.indices, id: \.self) { index in
+                    Button { projectFilter = projectFilter == categories[index] ? nil : categories[index] } label: {
+                        HStack(spacing: 5) {
+                            Circle().fill(categoryColor(categories[index])).frame(width: 4, height: 4)
+                            Text(categories[index].rawValue)
+                            if projectFilter == categories[index] { Image(systemName: "checkmark") }
+                            Spacer()
+                            Text("\(counts[index])").monospacedDigit()
+                        }.font(.system(size: 9)).foregroundStyle(palette.text).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel("\(categories[index].rawValue), \(counts[index]) projects")
+                        .accessibilityAddTraits(projectFilter == categories[index] ? .isSelected : [])
                 }
-                if values.last! > 0 { Text("Other files · \(values.last!) lines").font(.system(size: 8)).foregroundStyle(palette.muted) }
-                if files.isEmpty { Text(model.refreshing ? "Reading activity…" : "No committed text changes").font(.system(size: 9)).foregroundStyle(palette.muted) }
-                Text(model.activityFailures > 0 ? "Partial data · \(model.activityFailures) histories unavailable" : "Committed lines added + deleted · across projects")
-                    .font(.system(size: 8)).foregroundStyle(palette.muted)
             }
         }.padding(.vertical, 7).padding(.horizontal, 3)
     }
@@ -244,12 +257,14 @@ struct DashboardView: View {
         return VStack(alignment: .trailing, spacing: 6) {
             Text(verified ? "\(repo.ahead) to push" : "Unverified")
                 .font(.system(size: 9)).foregroundStyle(verified ? palette.lime : palette.muted)
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(palette.line)
-                    Capsule().fill(palette.lime).frame(width: verified ? geometry.size.width * Double(repo.ahead) / Double(maximum) : 0)
-                }
-            }.frame(width: 76, height: 5).accessibilityHidden(true)
+            if verified && repo.ahead > 0 {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(palette.line)
+                        Capsule().fill(palette.lime).frame(width: geometry.size.width * Double(repo.ahead) / Double(maximum))
+                    }
+                }.frame(width: 76, height: 5).accessibilityHidden(true)
+            }
         }.frame(width: 76).help("Outgoing commits compared with other projects, not a completion percentage")
     }
     private func status(_ repo: Repository) -> (String, Color) {
