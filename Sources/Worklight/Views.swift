@@ -1,39 +1,60 @@
 import SwiftUI
 import AppKit
 
-private let canvas = Color(red: 0.055, green: 0.067, blue: 0.09)
-private let surface = Color(red: 0.09, green: 0.105, blue: 0.135)
-private let mint = Color(red: 0.43, green: 0.88, blue: 0.71)
-private let blue = Color(red: 0.49, green: 0.70, blue: 1)
-private let amber = Color(red: 1, green: 0.74, blue: 0.38)
-private let muted = Color(red: 0.62, green: 0.66, blue: 0.73)
+// Neutral surfaces; saturated accents carry meaning without tinted card fills.
+private enum Palette {
+    static let canvas = Color(hex: 0x090909)
+    static let surface = Color(hex: 0x141414)
+    static let line = Color(hex: 0x292929)
+    static let text = Color(hex: 0xFAFAFA)
+    static let muted = Color(hex: 0xA3A3A3)
+    static let lime = Color(hex: 0xDFFF00)
+    static let violet = Color(hex: 0xAD5CFF)
+    static let pink = Color(hex: 0xFF29A8)
+    static let mint = Color(hex: 0x00FF9D)
+    static let amber = Color(hex: 0xFFCA00)
+}
+private extension Color {
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)
+    }
+}
 
 struct DashboardView: View {
+    static let width: CGFloat = 440
+    static let height: CGFloat = 560
     @ObservedObject var model: DashboardModel
     @State private var tab: Int
-    init(model: DashboardModel, initialTab: Int = 0) { self.model = model; _tab = State(initialValue: initialTab); _sortMemory = State(initialValue: model.performance.memoryLevel >= 2) }
+    @State private var expandedRepository: String?
+    @State private var expandedApp: String?
+    @State private var showLegend = false
+    @State private var showCPU = false
     @State private var search = ""
-    @State private var sortMemory = false
+    @State private var sortMemory: Bool
     @State private var pendingQuit: AppUsage?
     @State private var forceQuit = false
     @State private var pendingPull: Repository?
+    @Environment(\.openWindow) private var openWindow
+
+    init(model: DashboardModel, initialTab: Int = 0, expandedRepository: String? = nil) {
+        self.model = model
+        _tab = State(initialValue: initialTab)
+        _sortMemory = State(initialValue: model.performance.memoryLevel >= 2)
+        _expandedRepository = State(initialValue: expandedRepository)
+    }
     var body: some View {
         VStack(spacing: 0) {
             header
+            tabs
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    overview
-                    tabs
-                    if tab == 0 { projects } else { performance }
-                }.padding(22)
+                Group { if tab == 0 { projects } else { performance } }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }
             footer
         }
-        .frame(width: 610, height: 760)
-        .background(canvas)
-        .foregroundStyle(.white)
-        .preferredColorScheme(.dark)
-        .font(.system(size: 13))
+        .frame(width: Self.width, height: Self.height)
+        .background(Palette.canvas).foregroundStyle(Palette.text)
+        .preferredColorScheme(.dark).font(.system(size: 11))
         .onAppear { model.visible = true; model.start() }
         .onDisappear { model.visible = false }
         .onChange(of: model.performance.memoryLevel) { old, new in if old == 0 { sortMemory = new >= 2 } }
@@ -48,229 +69,240 @@ struct DashboardView: View {
             Button("Cancel", role: .cancel) { pendingPull = nil }
         } message: { Text("This changes the project’s files. Worklight checks again and only allows a fast-forward with no local edits or outgoing commits.") }
         .sheet(isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
-            VStack(alignment: .leading, spacing: 18) {
-                Label("Worklight", systemImage: "info.circle").font(.title3.bold())
-                ScrollView { Text(model.notice ?? "").textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 260)
-                Button("Done") { model.notice = nil }.buttonStyle(.borderedProminent).tint(mint).foregroundStyle(.black)
-            }.padding(24).frame(width: 490).background(canvas)
+            VStack(alignment: .leading, spacing: 16) {
+                Label("Worklight", systemImage: "info.circle").font(.headline)
+                ScrollView { Text(model.notice ?? "").font(.system(size: 12)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 250)
+                Button("Done") { model.notice = nil }.buttonStyle(NeonButtonStyle())
+            }.padding(20).frame(width: 390).background(Palette.canvas)
         }
     }
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sun.max.fill").font(.system(size: 20)).foregroundStyle(mint)
-                .frame(width: 38, height: 38).background(mint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Worklight").font(.system(size: 19, weight: .semibold, design: .rounded))
-                Text("YOUR WORK. A LITTLE CLEARER.").font(.system(size: 9, weight: .medium)).tracking(1.6).foregroundStyle(muted)
-            }
+        HStack(spacing: 8) {
+            Image(systemName: "sun.max").font(.system(size: 19, weight: .medium)).foregroundStyle(Palette.lime)
+                .frame(width: 28, height: 28).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.line))
+            Text("Worklight").font(.system(size: 14, weight: .semibold))
             Spacer()
-            Circle().fill(mint).frame(width: 6, height: 6)
-            Text("Live on your Mac").font(.system(size: 11)).foregroundStyle(muted)
+            Circle().fill(model.history.isEmpty ? Palette.muted : Palette.lime).frame(width: 5, height: 5)
+                .accessibilityLabel(model.history.isEmpty ? "Starting monitoring" : "Monitoring your Mac")
+            Button { model.refresh() } label: {
+                if model.refreshing { ProgressView().controlSize(.mini).frame(width: 24, height: 24) }
+                else { Image(systemName: "arrow.clockwise").frame(width: 24, height: 24) }
+            }.buttonStyle(.plain).foregroundStyle(Palette.muted).disabled(model.refreshing || model.pulling != nil)
+                .help("Fetch remote updates without changing your files").accessibilityLabel("Check projects now")
             Menu {
                 Button("Choose project folder…") { model.chooseFolder() }.disabled(model.refreshing || model.pulling != nil)
+                Button("Open dashboard window") { openWindow(id: "dashboard") }
                 Button("Open Activity Monitor") { model.activityMonitor() }
                 Divider()
+                Text("Projects checked every 5 minutes")
+                Text("CPU sampled every 3 seconds while open")
+                Divider()
                 Button("Quit Worklight") { NSApplication.shared.terminate(nil) }
-            } label: { Image(systemName: "ellipsis").frame(width: 26, height: 26) }.menuStyle(.borderlessButton).fixedSize()
-        }.padding(.horizontal, 22).padding(.vertical, 17)
-        .background(surface.opacity(0.55))
-        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.06)).frame(height: 1) }
-    }
-    private var overview: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if tab == 0 { HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(greeting).font(.system(size: 25, weight: .semibold, design: .rounded))
-                    Text(subtitle).font(.system(size: 12)).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Image(systemName: model.needsAttention > 0 ? "exclamationmark.circle" : "sparkle").font(.system(size: 24, weight: .light)).foregroundStyle(mint)
-            } }
-            HStack(spacing: 10) {
-                metric("PROJECT UPDATES", value: model.refreshing && model.repositories.isEmpty ? "…" : "\(model.incoming)", detail: model.incoming == 1 ? "project has incoming work" : "projects have incoming work", color: blue, symbol: "arrow.down.circle")
-                metric("CPU IN USE", value: "\(Int(model.performance.cpu))%", detail: model.performance.cpu >= 80 ? "Heavy activity right now" : "Across all CPU cores", color: model.performance.cpu >= 80 ? amber : mint, symbol: "cpu")
-                metric("MEMORY", value: model.memoryTitle, detail: String(format: "%.1f GB swap in use", model.performance.swapGB), color: model.performance.memoryLevel == 1 ? mint : amber, symbol: "memorychip")
-            }
-        }
-    }
-    private var greeting: String {
-        if model.performance.memoryLevel == 4 { return "Your Mac needs some room." }
-        if model.needsAttention > 0 { return "A few things to look at." }
-        if model.incoming > 0 { return "There’s new work to catch up on." }
-        return "Your workspace, at a glance."
-    }
-    private var subtitle: String {
-        if model.refreshing { return "Checking your projects for the latest changes…" }
-        return "See what changed. Understand what’s running. Stay in control."
-    }
-    private func metric(_ title: String, value: String, detail: String, color: Color, symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 4) { Image(systemName: symbol); Text(title).tracking(0.7) }.font(.system(size: 9, weight: .semibold)).foregroundStyle(muted)
-            Text(value).font(.system(size: title == "MEMORY" ? 16 : 28, weight: .semibold, design: .rounded)).foregroundStyle(color).frame(height: 32, alignment: .leading).minimumScaleFactor(0.8).lineLimit(1)
-            Text(detail).font(.system(size: 10)).foregroundStyle(muted).lineLimit(1).minimumScaleFactor(0.8)
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(13).background(surface, in: RoundedRectangle(cornerRadius: 14))
+            } label: { Image(systemName: "ellipsis").frame(width: 20, height: 24) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(Palette.muted)
+                .accessibilityLabel("Worklight settings")
+        }.padding(.horizontal, 16).frame(height: 54)
     }
     private var tabs: some View {
-        HStack(spacing: 4) {
-            tabButton("Projects", icon: "square.stack.3d.up", index: 0)
-            tabButton("What’s running", icon: "waveform.path.ecg", index: 1)
-        }.padding(4).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 11))
+        HStack(spacing: 20) {
+            tabButton("Projects", index: 0)
+            tabButton("Your Mac", index: 1)
+            Spacer()
+        }.padding(.horizontal, 16).frame(height: 38)
+            .overlay(alignment: .bottom) { rule }
     }
-    private func tabButton(_ title: String, icon: String, index: Int) -> some View {
+    private func tabButton(_ title: String, index: Int) -> some View {
         Button { tab = index } label: {
-            HStack(spacing: 7) { Image(systemName: icon); Text(title).fontWeight(.medium) }
-                .frame(maxWidth: .infinity).padding(.vertical, 10)
-                .background(tab == index ? Color.white.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                .foregroundStyle(tab == index ? .white : muted)
-        }.buttonStyle(.plain)
+            HStack(spacing: 6) {
+                Text(title).fontWeight(.medium)
+                if index == 0 {
+                    Text("\(model.repositories.count)").font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 5).padding(.vertical, 2).background(Palette.surface, in: RoundedRectangle(cornerRadius: 4))
+                } else if model.performance.memoryLevel >= 2 || !model.contributors.isEmpty {
+                    Circle().fill(Palette.amber).frame(width: 5, height: 5)
+                }
+            }.foregroundStyle(tab == index ? Palette.lime : Palette.muted).frame(height: 38)
+                .overlay(alignment: .bottom) { if tab == index { Rectangle().fill(Palette.lime).frame(height: 2) } }
+        }.buttonStyle(.plain).accessibilityAddTraits(tab == index ? .isSelected : [])
     }
     private var projects: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Your projects").font(.system(size: 15, weight: .semibold))
-                    Text(model.root.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 11)).foregroundStyle(muted).lineLimit(1).help(model.root)
-                }
-                Spacer()
-                Button { model.refresh() } label: {
-                    HStack(spacing: 5) { if model.refreshing { ProgressView().controlSize(.mini) } else { Image(systemName: "arrow.clockwise") }; Text(model.refreshing ? "Checking" : "Check now") }
-                }.buttonStyle(.bordered).disabled(model.refreshing || model.pulling != nil)
-            }
-            HStack(spacing: 7) {
-                Image(systemName: "info.circle").foregroundStyle(blue)
-                Text("Checks fetch updates. Your files change only when you choose Pull.").font(.system(size: 11)).foregroundStyle(muted)
-            }.padding(.vertical, 2)
-            DisclosureGroup("What do these statuses mean?") {
-                VStack(alignment: .leading, spacing: 8) {
-                    legend("↓ 3 incoming", "Your tracked remote branch has 3 commits you haven’t pulled.", blue)
-                    legend("↑ 2 outgoing", "You have 2 local commits you haven’t pushed.", amber)
-                    legend("5 changed files", "You have uncommitted work.", amber)
-                    legend("Diverged", "Both local and remote branches have new commits.", amber)
-                    legend("Up to date", "Your branch matches its tracked remote branch.", mint)
-                }.padding(.top, 10)
-            }.font(.system(size: 11)).tint(muted).padding(12).background(surface, in: RoundedRectangle(cornerRadius: 10))
+                Text(model.root.replacingOccurrences(of: NSHomeDirectory() + "/", with: "")).fontWeight(.medium).lineLimit(1).truncationMode(.middle).help(model.root)
+                Spacer(minLength: 8)
+                Text(model.refreshing ? "Checking…" : "\(model.incoming) with incoming work").font(.system(size: 10)).foregroundStyle(Palette.muted)
+            }.padding(.horizontal, 2)
             if model.repositories.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "folder.badge.questionmark").font(.largeTitle).foregroundStyle(muted)
-                    Text(model.refreshing ? "Finding and checking your projects…" : "No Git projects found here")
-                    if !model.refreshing { Button("Choose a folder") { model.chooseFolder() } }
-                    Text("Looks up to three folders deep, skipping build dependencies.").font(.caption).foregroundStyle(muted)
-                }.frame(maxWidth: .infinity).padding(24).background(surface, in: RoundedRectangle(cornerRadius: 14))
+                VStack(spacing: 10) {
+                    Image(systemName: "folder.badge.questionmark").font(.system(size: 24)).foregroundStyle(Palette.violet)
+                    Text(model.refreshing ? "Finding and checking projects…" : "No Git projects found here")
+                    if !model.refreshing { Button("Choose a folder") { model.chooseFolder() }.buttonStyle(NeonButtonStyle()) }
+                    Text("Looks three folders deep, skipping build dependencies.").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                }.frame(maxWidth: .infinity).padding(20).background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(model.repositories) { repo in
+                        repoRow(repo)
+                        if repo.id != model.repositories.last?.id { rule }
+                    }
+                }.background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.line))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            ForEach(model.repositories) { repo in repoCard(repo) }
+            if model.performance.memoryLevel >= 2 { memoryNudge }
+            HStack {
+                if model.refreshing { Text("Fetching updates…") }
+                else if let date = model.lastScan { Text("Scanned \(date, style: .relative) ago") }
+                else { Text("Waiting for first check") }
+                Spacer()
+                Button("What do the statuses mean?") { showLegend.toggle() }.buttonStyle(.plain)
+                    .accessibilityValue(showLegend ? "Expanded" : "Collapsed")
+            }.font(.system(size: 9)).foregroundStyle(Palette.muted).padding(.horizontal, 2)
+            if showLegend {
+                VStack(alignment: .leading, spacing: 8) {
+                    legend("↓ 3 incoming", "Your tracked remote branch has 3 commits you haven’t pulled.", Palette.violet)
+                    legend("↑ 2 outgoing", "You have 2 local commits you haven’t pushed.", Palette.violet)
+                    legend("5 changed files", "You have uncommitted work.", Palette.pink)
+                    legend("Diverged", "Both local and remote branches have new commits.", Palette.amber)
+                    legend("Up to date", "Your branch matches its tracked remote branch.", Palette.mint)
+                    Text("Checks fetch updates. Files change only when you choose Pull. A failed check leaves remote counts unverified.")
+                        .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                }.padding(10)
+            }
         }
     }
-    private func repoCard(_ repo: Repository) -> some View {
-        let color = repo.error != nil || repo.conflicts > 0 || (repo.ahead > 0 && repo.behind > 0) ? amber : repo.behind > 0 ? blue : repo.changed > 0 || repo.ahead > 0 ? amber : mint
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "folder").font(.system(size: 17)).foregroundStyle(color).frame(width: 34, height: 34).background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(repo.name).font(.system(size: 14, weight: .semibold))
-                    Label(repo.branch.isEmpty ? "No branch" : repo.branch, systemImage: "arrow.triangle.branch").font(.system(size: 10)).foregroundStyle(muted)
-                }
-                Spacer()
-                Label(repo.headline, systemImage: repo.error != nil ? "exclamationmark.circle" : repo.behind > 0 ? "arrow.down.circle" : repo.changed > 0 ? "pencil.circle" : "checkmark.circle")
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(color).padding(.horizontal, 8).padding(.vertical, 5).background(color.opacity(0.09), in: Capsule())
-            }
-            HStack(spacing: 16) {
-                countLabel(repo.behind, "incoming", "arrow.down", blue)
-                countLabel(repo.ahead, "outgoing", "arrow.up", amber)
-                countLabel(repo.changed, "changed files", "pencil", amber)
-            }
-            if !repo.files.isEmpty {
-                DisclosureGroup("See \(repo.files.count) changed files") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(repo.files.prefix(100)) { file in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(file.meaning).font(.system(size: 9, weight: .medium)).foregroundStyle(amber).frame(width: 55, alignment: .leading)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(file.path).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                    Text(file.location).font(.system(size: 9)).foregroundStyle(muted)
-                                }
-                                Spacer(minLength: 0)
-                                if !file.code.contains("D") {
-                                    Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.path).appendingPathComponent(file.path)]) } label: { Image(systemName: "arrow.up.forward.square") }.buttonStyle(.plain).help("Show file in Finder")
-                                }
-                            }
-                        }
-                        if repo.files.count > 100 { Text("Showing the first 100 files. Open your editor to see all.").font(.caption).foregroundStyle(muted) }
-                    }.padding(.top, 8)
-                }.font(.system(size: 11)).tint(muted)
-            }
+    private func status(_ repo: Repository) -> (String, Color) {
+        if repo.error != nil || repo.conflicts > 0 || repo.branch == "(detached)" { return (repo.headline, Palette.amber) }
+        if repo.upstream.isEmpty { return ("No tracking branch", Palette.muted) }
+        if repo.ahead > 0 && repo.behind > 0 { return ("Diverged", Palette.amber) }
+        if repo.behind > 0 { return ("↓ \(repo.behind) incoming", Palette.violet) }
+        if repo.ahead > 0 { return ("↑ \(repo.ahead) outgoing", Palette.violet) }
+        if repo.changed > 0 { return ("\(repo.changed) changed files", Palette.pink) }
+        return repo.checked == nil ? ("Remote not verified", Palette.muted) : ("✓ Up to date", Palette.mint)
+    }
+    private func repoRow(_ repo: Repository) -> some View {
+        let (label, color) = status(repo)
+        let expanded = expandedRepository == repo.id
+        return VStack(spacing: 0) {
+            Button { expandedRepository = expanded ? nil : repo.id } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "folder").font(.system(size: 18, weight: .medium)).foregroundStyle(color).frame(width: 29, height: 29)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(repo.name).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                        Label(repo.branch.isEmpty ? "No branch" : repo.branch, systemImage: "arrow.triangle.branch")
+                            .font(.system(size: 9)).foregroundStyle(Palette.muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(color).lineLimit(1).fixedSize()
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.muted).frame(width: 10)
+                }.padding(.horizontal, 10).frame(height: 56).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("\(repo.name), \(label), branch \(repo.branch)")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            if expanded { repositoryDetails(repo).padding(.leading, 48).padding(.trailing, 12).padding(.bottom, 12) }
+        }
+    }
+    private func repositoryDetails(_ repo: Repository) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 9) {
+                Text("↓ \(repo.behind) incoming").foregroundStyle(Palette.violet)
+                Text("↑ \(repo.ahead) outgoing").foregroundStyle(Palette.violet)
+                Text("\(repo.changed) changed files").foregroundStyle(Palette.pink)
+            }.font(.system(size: 9))
             if let error = repo.error {
-                Text("Couldn’t verify remote updates. \(error)").font(.system(size: 11)).foregroundStyle(amber).lineLimit(3).help(error).textSelection(.enabled)
+                Text("Couldn’t verify updates. \(error)").foregroundStyle(Palette.amber).textSelection(.enabled)
             } else if repo.upstream.isEmpty {
-                Text("This branch isn’t tracking a remote branch, so incoming updates are unknown.").font(.system(size: 11)).foregroundStyle(muted)
+                Text("Set a tracking branch in your editor to check for incoming commits.").foregroundStyle(Palette.muted)
             } else if repo.behind > 0 && !repo.canPull {
-                Text(repo.ahead > 0 ? "Local and remote work differ. Review both branches in your editor." : "Commit or stash your local edits in your editor before pulling.").font(.system(size: 11)).foregroundStyle(amber)
+                Text(repo.ahead > 0 ? "Both branches have new commits. Review in your editor before pulling." : "Commit or stash your local edits in your editor before pulling.").foregroundStyle(Palette.amber)
+            } else if repo.changed > 0 {
+                Text("You have uncommitted work.").foregroundStyle(Palette.muted)
             }
+            ForEach(repo.files.prefix(100)) { file in
+                VStack(alignment: .leading, spacing: 4) {
+                    rule
+                    HStack(alignment: .top, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(file.path).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            Text(file.location).font(.system(size: 9)).foregroundStyle(Palette.muted)
+                        }
+                        Spacer(minLength: 0)
+                        Text(file.meaning).font(.system(size: 9)).foregroundStyle(Palette.pink)
+                        if !file.code.contains("D") {
+                            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.path).appendingPathComponent(file.path)]) } label: {
+                                Image(systemName: "arrow.up.forward.square").foregroundStyle(Palette.muted)
+                            }.buttonStyle(.plain).help("Show \(file.path) in Finder").accessibilityLabel("Show \(file.path) in Finder")
+                        }
+                    }
+                }
+            }
+            if repo.files.count > 100 { Text("Showing 100 of \(repo.files.count) files. Open your editor for all.").foregroundStyle(Palette.muted) }
             HStack(spacing: 8) {
                 Menu {
                     Button("Open in T3 Code · copy project path") { model.openT3(repo) }
                     Button("Open in VS Code") { model.openVSCode(repo) }
                     Button("Show in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: repo.path)) }
                     if let url = repo.remoteURL { Button("View on GitHub") { NSWorkspace.shared.open(url) } }
-                } label: { Text("Open project") }.menuStyle(.borderlessButton).fixedSize()
+                } label: { Text("Open project ↗").font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.lime) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 Spacer()
-                if let checked = repo.checked { Text("Checked \(checked, style: .relative) ago").font(.system(size: 9)).foregroundStyle(muted) }
-                else { Text("Remote not verified").font(.system(size: 9)).foregroundStyle(muted) }
                 if repo.behind > 0 {
-                    Button(model.pulling == repo.path ? "Pulling…" : "Pull \(repo.behind) update\(repo.behind == 1 ? "" : "s")") { pendingPull = repo }
-                        .buttonStyle(.borderedProminent).tint(blue).foregroundStyle(.black)
-                        .disabled(!repo.canPull || model.refreshing || model.pulling != nil)
+                    Button(model.pulling == repo.path ? "Pulling…" : "Review pull") { pendingPull = repo }
+                        .buttonStyle(NeonButtonStyle()).disabled(!repo.canPull || model.refreshing || model.pulling != nil)
                 }
             }
-        }.padding(15).background(surface, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.045)))
-    }
-    private func legend(_ title: String, _ meaning: String, _ color: Color) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(title).foregroundStyle(color).frame(width: 110, alignment: .leading)
-            Text(meaning).foregroundStyle(muted).frame(maxWidth: .infinity, alignment: .leading)
+            if let checked = repo.checked { Text("Remote checked \(checked, style: .relative) ago").font(.system(size: 9)).foregroundStyle(Palette.muted) }
+            else { Text("Remote not verified").font(.system(size: 9)).foregroundStyle(Palette.muted) }
         }.font(.system(size: 10))
     }
-    private func countLabel(_ count: Int, _ label: String, _ icon: String, _ color: Color) -> some View {
-        HStack(spacing: 4) { Image(systemName: icon).foregroundStyle(count > 0 ? color : muted); Text("\(count)").fontWeight(.semibold); Text(label).foregroundStyle(muted) }.font(.system(size: 11))
+    private var memoryNudge: some View {
+        Button { tab = 1; sortMemory = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "memorychip").font(.system(size: 16)).foregroundStyle(Palette.amber)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.performance.memoryLevel == 4 ? "Memory pressure is high" : "Memory is under pressure")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.amber)
+                    Text("See the largest memory users").font(.system(size: 9)).foregroundStyle(Palette.muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(Palette.amber)
+            }.padding(10).background(Palette.surface, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.line))
+        }.buttonStyle(.plain)
+    }
+    private func legend(_ title: String, _ meaning: String, _ color: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(title).foregroundStyle(color).frame(width: 95, alignment: .leading)
+            Text(meaning).foregroundStyle(Palette.muted).frame(maxWidth: .infinity, alignment: .leading)
+        }.font(.system(size: 10))
     }
     private var performance: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("CPU activity").font(.system(size: 14, weight: .semibold))
-                    Spacer()
-                    Text("\(Int(model.performance.cpu))% of your Mac’s capacity").font(.system(size: 11)).foregroundStyle(mint)
-                }
-                Sparkline(values: model.history).frame(height: 36).foregroundStyle(mint)
-                HStack { Text("Recent samples"); Spacer(); Text("Now") }.font(.system(size: 9)).foregroundStyle(muted)
-            }.padding(15).background(surface, in: RoundedRectangle(cornerRadius: 14))
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "memorychip").foregroundStyle(model.performance.memoryLevel == 1 ? mint : amber)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Memory: \(model.memoryTitle.lowercased())").font(.system(size: 12, weight: .semibold))
-                    Text("Swap is disk space used for memory. Swap alone doesn’t mean your Mac is currently struggling.").font(.system(size: 11)).foregroundStyle(muted)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.performance.memoryLevel >= 2 ? "Memory is worth a look." : "What’s using your Mac?")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Only likely contributors with resource evidence appear here.").font(.system(size: 10)).foregroundStyle(Palette.muted)
             }
-            HStack {
-                Text("Likely slowdown contributors").font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Picker("Sort", selection: $sortMemory) { Text("CPU").tag(false); Text("Memory").tag(true) }.pickerStyle(.segmented).frame(width: 125).labelsHidden()
+            HStack(spacing: 10) {
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
+                    TextField("Find an app or process", text: $search).textFieldStyle(.plain).font(.system(size: 10))
+                }.padding(7).background(Palette.surface, in: RoundedRectangle(cornerRadius: 6))
+                Picker("Sort contributors", selection: $sortMemory) { Text("CPU").tag(false); Text("Memory").tag(true) }
+                    .pickerStyle(.segmented).frame(width: 113).controlSize(.mini).labelsHidden()
             }
-            HStack(spacing: 7) { Image(systemName: "magnifyingglass").foregroundStyle(muted); TextField("Find an app or process", text: $search).textFieldStyle(.plain) }
-                .padding(10).background(surface, in: RoundedRectangle(cornerRadius: 9))
-            Text("Only apps with resource evidence are shown. These are likely contributors, not a confirmed diagnosis. CPU: 100% = one core.").font(.system(size: 10)).foregroundStyle(muted)
-            if let error = model.performance.error { Text(error).foregroundStyle(amber) }
-            LazyVStack(spacing: 8) {
-                ForEach(filteredApps.prefix(40)) { usage in processCard(usage) }
-            }
+            if let error = model.performance.error { Text(error).font(.system(size: 10)).foregroundStyle(Palette.amber) }
             if filteredApps.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(search.isEmpty ? "No clear contributor identified" : "No matching contributors", systemImage: "checkmark.circle").foregroundStyle(mint)
-                    Text("Watching for sustained CPU usage and large memory users when pressure is elevated. Disk or thermal issues may need Activity Monitor.").font(.system(size: 11)).foregroundStyle(muted)
-                }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(surface, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(search.isEmpty ? "No clear contributor identified" : "No matching contributors", systemImage: "checkmark.circle").foregroundStyle(Palette.mint)
+                    Text("Watching for sustained CPU usage and large memory users when pressure is elevated.").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Palette.surface, in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                LazyVStack(spacing: 8) { ForEach(filteredApps.prefix(40)) { usage in processCard(usage) } }
             }
-            Button("Open Activity Monitor for all processes") { model.activityMonitor() }.buttonStyle(.bordered)
-            Text("Quit controls are available for your non-system desktop apps. Inspect other processes in Activity Monitor.").font(.system(size: 10)).foregroundStyle(muted)
+            Text("These are likely contributors, not a confirmed cause. Memory bars compare shown apps, not total RAM. Process CPU: 100% = one core. Swap: \(model.performance.swapGB, specifier: "%.1f") GB; swap alone doesn’t mean your Mac is currently struggling.")
+                .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            Button("Open Activity Monitor ↗") { model.activityMonitor() }.buttonStyle(NeonButtonStyle())
+            Text("Quit controls are for your non-system desktop apps. Inspect other processes in Activity Monitor.").font(.system(size: 9)).foregroundStyle(Palette.muted)
         }
     }
     private var filteredApps: [AppUsage] {
@@ -278,55 +310,101 @@ struct DashboardView: View {
             .sorted { sortMemory ? $0.memoryMB > $1.memoryMB : $0.cpu > $1.cpu }
     }
     private func processCard(_ usage: AppUsage) -> some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 9) {
-                ForEach(model.reasons(for: usage), id: \.self) { reason in
-                    Label(reason, systemImage: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(amber)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                if let icon = usage.icon { Image(nsImage: icon).resizable().frame(width: 26, height: 26) }
+                else { Image(systemName: "terminal").font(.system(size: 18)).foregroundStyle(Palette.violet).frame(width: 26, height: 26) }
+                Text(usage.name).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                Text(sortMemory ? memoryAmount(usage.memoryMB) : String(format: "%.1f%%", usage.cpu))
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(sortMemory ? Palette.pink : Palette.lime).fixedSize()
+            }
+            GeometryReader { geo in
+                RoundedRectangle(cornerRadius: 2).fill(Palette.line).overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2).fill(sortMemory ? Palette.pink : Palette.lime)
+                        .frame(width: geo.size.width * min(1, max(0.005, sortMemory ? usage.memoryMB / max(1, filteredApps.first?.memoryMB ?? 1) : usage.cpu / Double(ProcessInfo.processInfo.processorCount * 100))))
                 }
-                ForEach(usage.processes.sorted { $0.cpu > $1.cpu }.prefix(30)) { process in
+            }.frame(height: 3).accessibilityHidden(true)
+            ForEach(model.reasons(for: usage), id: \.self) { reason in Text(reason).font(.system(size: 10)).foregroundStyle(Palette.muted) }
+            HStack {
+                Text(sortMemory ? String(format: "%.1f%% CPU · %d processes", usage.cpu, usage.processes.count) : "\(memoryAmount(usage.memoryMB)) · \(usage.processes.count) processes")
+                    .font(.system(size: 9)).foregroundStyle(Palette.muted)
+                Spacer()
+                if usage.canQuit { Button("Review quit") { forceQuit = false; pendingQuit = usage }.buttonStyle(NeonButtonStyle()) }
+            }
+            Button { expandedApp = expandedApp == usage.id ? nil : usage.id } label: {
+                Label("See process details", systemImage: expandedApp == usage.id ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9)).foregroundStyle(Palette.muted)
+            }.buttonStyle(.plain).accessibilityValue(expandedApp == usage.id ? "Expanded" : "Collapsed")
+            if expandedApp == usage.id {
+                ForEach(usage.processes.sorted { sortMemory ? $0.memoryMB > $1.memoryMB : $0.cpu > $1.cpu }.prefix(30)) { process in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(process.name).font(.system(size: 11, weight: .medium))
-                            Text("PID \(process.pid) · \(process.command)").font(.system(size: 9)).foregroundStyle(muted).lineLimit(2).textSelection(.enabled).help(process.command)
+                            Text(process.name).font(.system(size: 10, weight: .medium))
+                            Text("PID \(process.pid) · \(process.command)").font(.system(size: 9)).foregroundStyle(Palette.muted)
+                                .lineLimit(2).textSelection(.enabled).help(process.command)
                         }
                         Spacer()
-                        Text(String(format: "%.1f%%", process.cpu)).font(.system(size: 10, design: .monospaced)).foregroundStyle(muted)
+                        Text(sortMemory ? memoryAmount(process.memoryMB) : String(format: "%.1f%%", process.cpu)).font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize()
                     }
                 }
-                if usage.processes.count > 30 { Text("Showing 30 of \(usage.processes.count) processes. See Activity Monitor for all.").font(.caption).foregroundStyle(muted) }
-                if usage.canQuit {
-                    HStack {
-                        Button("Quit app") { forceQuit = false; pendingQuit = usage }.buttonStyle(.bordered)
-                        Spacer()
-                        Button("Force quit…") { forceQuit = true; pendingQuit = usage }.buttonStyle(.plain).foregroundStyle(amber).font(.system(size: 11))
-                    }.padding(.top, 4)
-                }
-            }.padding(.top, 10)
-        } label: {
-            HStack(spacing: 10) {
-                if let icon = usage.icon { Image(nsImage: icon).resizable().frame(width: 28, height: 28) }
-                else { Image(systemName: "terminal").font(.system(size: 19)).foregroundStyle(muted).frame(width: 28, height: 28) }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(usage.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Text(model.reasons(for: usage).first ?? "Expand to inspect processes").font(.system(size: 9)).foregroundStyle(muted)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(sortMemory ? String(format: "%.0f MB", usage.memoryMB) : String(format: "%.1f%%", usage.cpu)).font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(usage.cpu > 80 ? amber : mint)
-                    Text(sortMemory ? String(format: "%.1f%% CPU", usage.cpu) : String(format: "%.0f MB", usage.memoryMB)).font(.system(size: 9)).foregroundStyle(muted)
-                    GeometryReader { geo in RoundedRectangle(cornerRadius: 2).fill(.white.opacity(0.07)).overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(usage.cpu > 80 ? amber : mint).frame(width: geo.size.width * min(1, max(0.015, sortMemory ? usage.memoryMB / 8192 : usage.cpu / 100))) } }.frame(width: 60, height: 3)
-                }
+                if usage.processes.count > 30 { Text("Showing 30 of \(usage.processes.count) processes. See Activity Monitor for all.").font(.system(size: 9)).foregroundStyle(Palette.muted) }
+                Text("Memory totals may count shared pages more than once.").font(.system(size: 9)).foregroundStyle(Palette.muted)
+                if usage.canQuit { Button("Force quit…") { forceQuit = true; pendingQuit = usage }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(Palette.amber) }
             }
-        }.tint(muted).padding(12).background(surface, in: RoundedRectangle(cornerRadius: 11))
+        }.padding(12).background(Palette.surface, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.line))
     }
+    private func memoryAmount(_ mb: Double) -> String { mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : String(format: "%.0f MB", mb) }
+    private var memoryColor: Color { model.performance.memoryLevel == 1 ? Palette.mint : model.performance.memoryLevel == 0 ? Palette.muted : Palette.amber }
     private var footer: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-            Text("Projects every 5 min · CPU every \(model.visible ? "3" : "15") sec")
-            Spacer()
-            Text("PRIVATE BY DEFAULT").font(.system(size: 8, weight: .medium)).tracking(1)
-        }.font(.system(size: 10)).foregroundStyle(muted).padding(.horizontal, 22).padding(.vertical, 12)
-        .background(surface.opacity(0.55))
+        HStack(spacing: 8) {
+            Button { showCPU.toggle() } label: {
+                HStack(spacing: 7) {
+                    Text("CPU").foregroundStyle(Palette.muted)
+                    Sparkline(values: model.history).frame(width: 44, height: 18).foregroundStyle(Palette.lime)
+                    Text(model.history.isEmpty ? "…" : "\(Int(model.performance.cpu))%").fontWeight(.semibold).foregroundStyle(Palette.lime).monospacedDigit()
+                }.font(.system(size: 10))
+            }.buttonStyle(.plain).accessibilityLabel("CPU \(Int(model.performance.cpu)) percent. Show activity details")
+                .popover(isPresented: $showCPU) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("CPU: \(Int(model.performance.cpu))% of your Mac’s capacity").font(.system(size: 12, weight: .semibold))
+                        Sparkline(values: model.history).frame(height: 60).foregroundStyle(Palette.lime)
+                        Text("Recent samples across all cores. Memory pressure is a separate signal. Samples are about 3 seconds apart while open and 15 seconds apart otherwise.")
+                            .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                    }.padding(16).frame(width: 300).background(Palette.canvas).preferredColorScheme(.dark)
+                }
+            Spacer(minLength: 8)
+            Rectangle().fill(Palette.line).frame(width: 1, height: 14)
+            Spacer(minLength: 8)
+            Button { tab = 1; sortMemory = true } label: {
+                HStack(spacing: 6) {
+                    HStack(spacing: 2) {
+                        ForEach(0..<4) { index in
+                            RoundedRectangle(cornerRadius: 1.5).fill(memorySegmentActive(index) ? memoryColor : Palette.line).frame(width: 4, height: 9)
+                        }
+                    }.accessibilityHidden(true)
+                    Text("Memory").foregroundStyle(Palette.muted)
+                    Text(model.memoryTitle).foregroundStyle(memoryColor)
+                    Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(Palette.muted)
+                }.font(.system(size: 9))
+            }.buttonStyle(.plain).accessibilityLabel("Memory \(model.memoryTitle). Show memory contributors")
+        }.padding(.horizontal, 16).frame(height: 48).background(Palette.surface)
+            .overlay(alignment: .top) { rule }
+    }
+    private func memorySegmentActive(_ index: Int) -> Bool {
+        switch model.performance.memoryLevel { case 1: return index == 0; case 2: return index < 3; case 4: return true; default: return false }
+    }
+    private var rule: some View { Rectangle().fill(Palette.line).frame(height: 1) }
+}
+
+private struct NeonButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(enabled ? Color.black : Palette.muted)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(enabled ? Palette.lime.opacity(configuration.isPressed ? 0.8 : 1) : Palette.line, in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -334,16 +412,13 @@ struct Sparkline: View {
     let values: [Double]
     var body: some View {
         GeometryReader { geo in
-            ZStack {
-                ForEach(0..<3) { i in Path { p in let y = CGFloat(i) * geo.size.height / 2; p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: geo.size.width, y: y)) }.stroke(.white.opacity(0.05), style: StrokeStyle(lineWidth: 1, dash: [3, 4])) }
-                Path { p in
-                    guard values.count > 1 else { return }
-                    for (i, value) in values.enumerated() {
-                        let point = CGPoint(x: CGFloat(i) / CGFloat(values.count - 1) * geo.size.width, y: geo.size.height * (1 - min(100, max(0, value)) / 100))
-                        if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
-                    }
-                }.stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            }
+            Path { path in
+                guard values.count > 1 else { return }
+                for (index, value) in values.enumerated() {
+                    let point = CGPoint(x: CGFloat(index) / CGFloat(values.count - 1) * geo.size.width, y: geo.size.height * (1 - min(100, max(0, value)) / 100))
+                    if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                }
+            }.stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
         }.accessibilityLabel("Recent CPU usage: \(Int(values.last ?? 0)) percent")
     }
 }

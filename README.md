@@ -18,6 +18,14 @@ To update: quit Worklight, pull this repository, and run the installer again. To
 
 This repository is private. Sign into GitHub before cloning. GitHub Actions also produces a zipped app artifact for its runner’s architecture. That artifact is ad-hoc signed, not notarized; building locally is the intended personal installation route. No paid Apple developer account is needed for this local build.
 
+## Compact neon interface
+
+Version 0.2 uses a 440 × 560 point panel, with black/charcoal surfaces and unfilled neon icons and status labels. Lime highlights the sun, active tab, CPU graph, and action buttons; violet marks incoming/outgoing commits, pink marks local file changes, mint marks verified up-to-date branches, and amber marks issues.
+
+Five collapsed project rows fit without scrolling. Click a row to reveal commit counts, changed-file paths, staging details, editor shortcuts, and guarded pull actions. The small header refresh button fetches remote changes. Status explanations sit below the projects.
+
+CPU and memory stay in a narrow bottom strip: click the CPU sparkline for recent activity, or click memory to see likely contributors in **Your Mac**. Memory pressure also adds a compact callout below the projects. The app never labels resource usage as a proven cause of a slowdown. Quit confirmations, process details, search, sorting, and Activity Monitor remain available.
+
 ## Projects
 
 Starts with `~/Desktop/apps`; change it using the header’s menu. Discovery searches three levels below the selected folder, skips dependency/build directories and symlinks, and stops at each repository. Git worktrees are supported. Ordinary folders without Git are not listed.
@@ -62,6 +70,6 @@ swift run Worklight --diagnose
 
 Self-tests create disposable local repositories and verify remote discovery, fetch without file changes, clean fast-forward pulls, dirty-file protection, divergence refusal, fetch failures, and live process sampling. They do not pull or edit your projects.
 
-`--diagnose` prints local repository state without fetching, plus CPU/memory diagnostics. `--render-preview` renders both native dashboard tabs into `dist/` for layout inspection; it uses the dashboard’s normal monitoring behavior. Previews and build output are excluded from Git.
+`--diagnose` prints local repository state without fetching, plus CPU/memory diagnostics. `--render-preview` renders both native dashboard tabs and an expanded changed-file view into `dist/` for layout inspection; it uses the dashboard’s normal monitoring behavior. Previews and build output are excluded from Git.
 
 Source layout: `System.swift` handles Git and system sampling; `Model.swift` handles updates and app grouping; `Views.swift` contains the dashboard; `App.swift` defines the menu bar and window scenes.

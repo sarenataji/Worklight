@@ -7,11 +7,11 @@ for size in [16, 32, 128, 256, 512] {
         let image = NSImage(size: NSSize(width: pixels, height: pixels))
         image.lockFocus()
         let transform = NSAffineTransform(); transform.scale(by: CGFloat(pixels) / 1024); transform.concat()
-        NSColor(calibratedRed: 0.075, green: 0.10, blue: 0.13, alpha: 1).setFill()
+        NSColor(calibratedRed: 0.035, green: 0.035, blue: 0.035, alpha: 1).setFill()
         NSBezierPath(roundedRect: NSRect(x: 42, y: 42, width: 940, height: 940), xRadius: 210, yRadius: 210).fill()
-        NSColor(calibratedRed: 0.43, green: 0.88, blue: 0.71, alpha: 1).setFill()
+        NSColor(calibratedRed: 0.875, green: 1.0, blue: 0.0, alpha: 1).setFill()
         NSBezierPath(ovalIn: NSRect(x: 362, y: 362, width: 300, height: 300)).fill()
-        NSColor(calibratedRed: 0.43, green: 0.88, blue: 0.71, alpha: 1).setStroke()
+        NSColor(calibratedRed: 0.875, green: 1.0, blue: 0.0, alpha: 1).setStroke()
         for i in 0..<8 {
             let angle = CGFloat(i) * .pi / 4
             let p = NSBezierPath(); p.lineWidth = 36; p.lineCapStyle = .round
