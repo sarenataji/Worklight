@@ -216,6 +216,7 @@ struct DashboardView: View {
         let categories = ProjectCategory.allCases
         let counts = categories.map { category in model.repositories.filter { ProjectCategory.classify($0) == category }.count }
         let total = model.repositories.count
+        let visibleCount = filteredRepositories.count
         return HStack(spacing: 14) {
             ZStack {
                 Circle().stroke(palette.line, lineWidth: 5)
@@ -226,8 +227,16 @@ struct DashboardView: View {
                         .stroke(categoryColor(categories[index]), style: StrokeStyle(lineWidth: 5))
                         .rotationEffect(.degrees(-90))
                 }
-                Text("Projects").font(.system(size: 10, weight: .medium))
-            }.frame(width: 66, height: 66).accessibilityLabel("Project status overview, \(total) projects")
+                VStack(spacing: 1) {
+                    Text("\(visibleCount)")
+                        .font(.system(size: 19, weight: .semibold)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                    Text(visibleCount == 1 ? "Project" : "Projects")
+                        .font(.system(size: 9, weight: .medium)).foregroundStyle(palette.muted)
+                }.frame(width: 52)
+            }.frame(width: 66, height: 66)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(visibleCount) projects shown, \(projectFilter?.rawValue ?? "All projects"), \(total) total")
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text("Projects at a glance").font(.system(size: 10, weight: .semibold))
